@@ -11,19 +11,21 @@ console.
 | 13.60 | tested | |
 | 12.40 | tested ¹ | |
 | 13.20, 13.40 ², 12.20 | checked | |
-| 10.00, 10.40, 10.60, 11.60 | checked | hand tracking |
+| 10.00, 10.01 ⁴, 10.40, 10.60, 11.60 | checked | hand tracking |
 | 7.20, 7.61, 8.40 | checked | hand tracking |
 | 5.50 | checked ³ | hand tracking |
 
 1. Playback can become choppy after a few seconds (being investigated).
 2. Only 13.40's `libSceVrTracker2` was checked; it matches 13.60's.
 3. 5.50 predates PS VR2's release, so headset support there may be incomplete.
+4. Only 10.01's `libSceHmd2` and `libSceSystemService` were checked; the first
+   matches 10.00's, and 10.00, 10.40 and 10.60 share one VR tracker build.
 
 `libSceSystemService` (clean exit) is still needed for 13.40, 11.60, 8.40, 7.20
 and 7.61; without it the app ends its own process instead.
 
 Libraries were shared by @rmznoky (5.50), @tertiumndatur (7.20), @tvk-source
-(7.61), @Vorenu5 (8.40), @hu601 (10.00), @ytc44 (10.40), @hsv2049cs (10.60),
+(7.61), @Vorenu5 (8.40), @hu601 (10.00), @S4m1n9 (10.01), @ytc44 (10.40), @hsv2049cs (10.60),
 @jimicaoo (11.60), @mschifino (12.20), @mtp-24 (12.40), @Gitlizard2 (13.20)
 and @jarmster (13.40). Thank you.
 

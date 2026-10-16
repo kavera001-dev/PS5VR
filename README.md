@@ -12,7 +12,8 @@ PS VR2 compositor, at 120 Hz.
 > Homebrew. Not affiliated with or endorsed by Sony. It plays your own files
 > and the sources you point it at; it includes no content.
 
---- UPDATE: I will respond to firmware requests shortly.
+Firmware 5.50 to 13.60 are supported from 1.2.1, see
+[docs/firmware-support.md](docs/firmware-support.md).
 
 ## Features
 
@@ -120,7 +121,8 @@ LLPC for gfx1013; their generators are in `app/tools/shaders/`.
 ## How it works
 
 - The PS VR2 system libraries (libSceHmd2, libSceVrTracker2, libSceVrHand)
-  are loaded at runtime and called by their exports on firmware 13.60. The
+  are loaded at runtime and called by their exports, using the table for the
+  console's firmware. The
   picture goes to the headset as a type 0x10 layer through Hmd2's
   reprojection, the way PS VR2 games submit it.
 - Each decoded frame is converted once on the GPU and projected per eye
