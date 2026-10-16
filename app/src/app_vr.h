@@ -59,8 +59,10 @@ int  app_vr_bind(const char *lib, const char *const *names, void **slots, int n)
 uint64_t app_vr_frame_time(void);
 /* Logs whether hand tracking's camera opens succeed. */
 void app_vr_camera_probe(void);
-/* Where libSceVrTracker2 is loaded (0 before app_vr_preload). */
-uintptr_t app_vr_tracker_base(void);
+/* Where a library bound by export offsets (libSceVrTracker2, libSceVrHand) is
+ * loaded, and which firmware's table it matched in *fw (1360 for 13.60);
+ * 0 if not bound that way. */
+uintptr_t app_vr_lib_base(const char *lib, int *fw);
 /* The head position in tracker space (metres) and the rotation from tracker
  * space to the space the picture and panels are drawn in. */
 void app_vr_head_pose(float pos[3], float yaw_q[4]);

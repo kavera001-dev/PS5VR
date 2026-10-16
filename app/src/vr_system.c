@@ -130,8 +130,11 @@ int vr_hands_on(void)
  * handCenter_%02d, 2v+2 handPose_%02d (libSceVrHand's own naming). So the
  * library's import of that export is pointed here, with the same contract:
  * 0 and *out = bytes, 0x8a740006 bad args, 0x8a740009 buffer too small. */
-#define VRHAND_GOT_MODEL      0xf4e68       /* libSceVrHand's slot for it */
-#define VRTRACKER2_MODEL_FN   0x7f50
+/* Per firmware: libSceVrHand's slot for it, and the export's offset. */
+static const struct { int fw; uint32_t got, fn; } kModelImport[] = {
+    {1360, 0xf4e68, 0x7f50},
+    {1240, 0xf4e68, 0x7f70},
+};
 
 static int model_read(int id, void *buf, size_t size, size_t *out)
 {
@@ -169,10 +172,20 @@ static void patch_model_import(void)
 {
     if (s_models_patched || !sceVrHandInitialize)
         return;
-    const uintptr_t hand = (uintptr_t)sceVrHandInitialize - 0x197c0;
-    const uintptr_t tracker = app_vr_tracker_base();
-    uint64_t *slot = (uint64_t *)(hand + VRHAND_GOT_MODEL);
-    if (!tracker || *slot != tracker + VRTRACKER2_MODEL_FN) {
+    /* Only with both libraries on a firmware listed above: elsewhere the
+     * slot is not read. */
+    int hand_fw, tracker_fw;
+    const uintptr_t hand = app_vr_lib_base("libSceVrHand", &hand_fw);
+    const uintptr_t tracker = app_vr_lib_base("libSceVrTracker2", &tracker_fw);
+    size_t k = 0;
+    while (k < sizeof kModelImport / sizeof *kModelImport && kModelImport[k].fw != hand_fw)
+        k++;
+    if (!hand || !tracker || hand_fw != tracker_fw || k == sizeof kModelImport / sizeof *kModelImport) {
+        eng_bt("vr: hand model import: no offsets for this firmware, left alone");
+        return;
+    }
+    uint64_t *slot = (uint64_t *)(hand + kModelImport[k].got);
+    if (*slot != tracker + kModelImport[k].fn) {
         eng_bt("vr: hand model import not as expected (%p), left alone", (void *)*slot);
         return;
     }
