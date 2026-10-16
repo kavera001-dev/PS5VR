@@ -12,7 +12,7 @@ PS VR2 compositor, at 120 Hz.
 > Homebrew. Not affiliated with or endorsed by Sony. It plays your own files
 > and the sources you point it at; it includes no content.
 
----
+--- UPDATE: I will respond to firmware requests shortly.
 
 ## Features
 
