@@ -74,12 +74,6 @@ int vr_system_exit_app(void)
 void vr_system_preload(void)
 {
     log_app_info();
-    {
-        static const char *const n[] = {"sceShellCoreUtilExitApp"};
-        void *f[1];
-        if (app_vr_bind("libSceSystemService", n, f, 1) == 0)
-            *(void **)&sceShellCoreUtilExitApp = f[0];
-    }
     static const char *const hand[] = {"sceVrHandInitialize", "sceVrHandFinalize", "sceVrHandStart",
                                        "sceVrHandStop", "sceVrHandGetResult"};
     void *h[5];

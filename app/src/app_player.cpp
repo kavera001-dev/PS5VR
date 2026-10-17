@@ -936,10 +936,12 @@ static bool vr_frame(Session &s, bool have, const pp_video_frame &f, int64_t pts
         app_vr_set_options(&o);
         if (s.req.vr.empty())                 /* a guess: check it against the picture */
             app_vr_fit_frame(&s.vr_fmt, (int)f.disp_w, (int)f.disp_h);
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 19, 100)
         if (s.req.vr.empty() && eng_vdec_multiview_active) {
             s.vr_fmt.projection = 0;          /* spatial video: a 3D screen */
             s.vr_fmt.stereo = 1;
         }
+#endif
         vr_check_depth_half(s.vr_fmt, f);
         vr_ui_set_detected(s.vr_fmt.projection, s.vr_fmt.stereo);
         s_vrplace.shown = false;

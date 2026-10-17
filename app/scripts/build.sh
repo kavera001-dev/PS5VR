@@ -51,7 +51,7 @@ need() { [[ -e "$1" ]] || die "$2"; }
 
 : "${PS5_PAYLOAD_SDK:=/opt/ps5-payload-sdk}"
 PS5_SYSROOT="${PS5_PAYLOAD_SDK}/target"
-HB="${PS5_SYSROOT}/user/homebrew"
+HB="${HB:-${PS5_SYSROOT}/user/homebrew}"
 NATIVE="${ENG_ROOT}/tools/native-app"
 LLD="$(command -v prospero-lld || echo "${PS5_PAYLOAD_SDK}/bin/prospero-lld")"
 AR="$(command -v prospero-ar || echo "${PS5_PAYLOAD_SDK}/bin/prospero-ar")"
@@ -151,10 +151,10 @@ log "linking"
 ARCHIVES=()
 # The overlay: libass (subtitles), FreeType/HarfBuzz/fribidi (text), and the
 # image decoders for artwork. libass links fontconfig, which is never used.
-for a in libavformat libavcodec libswresample libavutil libswscale libdav1d \
+for a in libavformat libavcodec libswresample libavutil libswscale \
          libass libharfbuzz libfribidi libfontconfig libexpat libfreetype \
          libpng16 libjpeg libwebp libsharpyuv \
-         libssl libcrypto libiconv libxml2 libz libbz2 liblzma libzstd libm; do
+         libssl libcrypto libiconv libxml2 libz libbz2 liblzma libzstd libx264 libm; do
     need "${HB}/lib/${a}.a" "sysroot archive missing: ${a}.a"
     ARCHIVES+=("${HB}/lib/${a}.a")
 done

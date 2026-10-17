@@ -4,7 +4,7 @@
  * Hmd2 and VrTracker2 are system modules: they are loaded with
  * sceSysmoduleLoadModule and their functions found through sceKernelDlsym, or,
  * where an app may not dlsym them, at the FW 13.60 export offsets after a
- * module-name and rodata check (vr_exports_1360.h). The frame setup is the one
+ * module-name and rodata check (vr_exports_1270.h). The frame setup is the one
  * Horizon Call of the Mountain uses (ps5vr/research/hmd2-notes.md): a type 0x10
  * layer whose two textures are the same side-by-side eye buffer, with per-eye
  * viewports, FOV tangents, the device pose and the predicted display time.
@@ -120,7 +120,7 @@ int sceVideoOutConfigureOutput(int handle, uint64_t mode, const void *options, c
 /* -- module loading -------------------------------------------------------- */
 typedef struct { const char *name; uint32_t offset; } export_sig_t;
 typedef struct { uint32_t va; const char *text; } export_anchor_t;
-#include "vr_exports_1360.h"
+#include "vr_exports_1270.h"
 
 typedef struct { const char *name; void **slot; } slot_t;
 #define SLOT(ret, name, args) {#name, (void **)&name},
@@ -537,8 +537,6 @@ int app_vr_bind(const char *lib, const char *const *names, void **slots, int n)
         const export_anchor_t *anchor;
     } kLibs[] = {
         {"libSceVrHand", klibSceVrHandExports, COUNT(klibSceVrHandExports), &klibSceVrHandAnchor},
-        {"libSceSystemService", klibSceSystemServiceExports, COUNT(klibSceSystemServiceExports),
-         &klibSceSystemServiceAnchor},
     };
     for (size_t k = 0; k < COUNT(kLibs); k++) {
         if (strcmp(kLibs[k].lib, lib))
