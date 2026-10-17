@@ -8,12 +8,16 @@
  */
 #pragma once
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Loads the libraries; with the other modules, before the sandbox opens. */
 void vr_system_preload(void);
+/* One request line to ps5vr-helper (127.0.0.1:9079); its one-line answer. 0 on success. */
+int vr_helper_ask(const char *req, char *reply, size_t size);
 /* Once per headset frame. */
 void vr_system_tick(void);
 /* Stops what runs, before the app ends. */

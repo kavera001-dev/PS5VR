@@ -200,8 +200,8 @@ static void patch_model_import(void)
     eng_bt("vr: hand models read from /system/priv/vr_hand_ro");
 }
 
-/* One line to ps5vr-helper (127.0.0.1:9079), its answer into reply. */
-static int helper_ask(const char *req, char *reply, size_t size)
+/* One line to ps5vr-helper (127.0.0.1:9079), its answer (one line) into reply. */
+int vr_helper_ask(const char *req, char *reply, size_t size)
 {
     reply[0] = 0;
     const int sk = socket(AF_INET, SOCK_STREAM, 0);
@@ -216,8 +216,15 @@ static int helper_ask(const char *req, char *reply, size_t size)
     setsockopt(sk, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     int n = -1;
     if (connect(sk, (struct sockaddr *)&a, sizeof a) == 0 &&
-        send(sk, req, strlen(req), 0) == (ssize_t)strlen(req))
-        n = (int)recv(sk, reply, size - 1, 0);
+        send(sk, req, strlen(req), 0) == (ssize_t)strlen(req)) {
+        n = 0;
+        while (n < (int)size - 1 && !memchr(reply, '\n', (size_t)n)) {
+            const int k = (int)recv(sk, reply + n, size - 1 - (size_t)n, 0);
+            if (k <= 0)
+                break;
+            n += k;
+        }
+    }
     close(sk);
     if (n > 0)
         reply[n] = 0;
@@ -233,7 +240,7 @@ static int cameras_open(void)
         if (level > 0) {
             char req[48], reply[160];
             snprintf(req, sizeof req, "elevate %d %d\n", (int)getpid(), level);
-            if (helper_ask(req, reply, sizeof reply) != 0) {
+            if (vr_helper_ask(req, reply, sizeof reply) != 0) {
                 eng_bt("vr: hand tracking needs ps5vr-helper, which is not running");
                 return 0;
             }

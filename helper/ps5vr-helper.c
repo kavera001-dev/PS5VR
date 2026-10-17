@@ -8,7 +8,8 @@
  *
  * Only when PS5VR asks: it connects to 127.0.0.1:9079 and sends
  * "unjail <pid>" once it has loaded every system module it needs, and
- * "elevate <pid> <level>" when it starts hand tracking (see elevate()). Library
+ * "elevate <pid> <level>" when it starts hand tracking (see elevate()), and
+ * "resolve ..." on a firmware it has no export table for (see resolve()). Library
  * loads go through the sandbox's /<random word>/common/lib path, which does
  * not exist under the real root, so a process unjailed while it is still
  * starting fails to start (PRX_PROCESS_STARTUP_FAILURE).
@@ -138,6 +139,34 @@ static const char *elevate(pid_t pid, int level)
     return reply;
 }
 
+/* "resolve <pid> <handle> <nid>...": where each export of one of PS5VR's
+ * loaded libraries is, from the kernel's copy of its symbol table. Lets the app
+ * run on a firmware it has no export table for. Answers "ok <hex>..." (0 = not
+ * exported). */
+static const char *resolve(char *args)
+{
+    static char reply[4096];
+    char *save = NULL;
+    const char *p = strtok_r(args, " \r\n", &save);
+    const char *hs = p ? strtok_r(NULL, " \r\n", &save) : NULL;
+    const pid_t pid = p ? (pid_t)atoi(p) : 0;
+    app_info_t ai;
+    memset(&ai, 0, sizeof ai);
+    if (!hs || pid <= 0 || sceKernelGetAppInfo(pid, &ai) != 0 || strncmp(ai.title_id, TITLE, 9))
+        return "fail: not PS5VR\n";
+    const int handle = (int)strtol(hs, NULL, 0);
+    size_t len = (size_t)snprintf(reply, sizeof reply, "ok");
+    int found = 0, asked = 0;
+    for (const char *nid; (nid = strtok_r(NULL, " \r\n", &save)) && len + 20 < sizeof reply; asked++) {
+        const intptr_t a = strlen(nid) == 11 ? kernel_dynlib_resolve(pid, handle, nid) : 0;
+        found += a != 0;
+        len += (size_t)snprintf(reply + len, sizeof reply - len, " %lx", (unsigned long)a);
+    }
+    snprintf(reply + len, sizeof reply - len, "\n");
+    say("PS5VR pid %d: resolved %d of %d exports of handle 0x%x", pid, found, asked, handle);
+    return reply;
+}
+
 int main(void)
 {
     signal(SIGPIPE, SIG_IGN);
@@ -171,8 +200,14 @@ int main(void)
             continue;
         struct timeval tv = {2, 0};
         setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-        char line[64] = {0};
-        ssize_t n = recv(c, line, sizeof line - 1, 0);
+        char line[2048] = {0};
+        ssize_t n = 0;
+        while (n < (ssize_t)sizeof line - 1 && !memchr(line, '\n', (size_t)n)) {
+            const ssize_t k = recv(c, line + n, sizeof line - 1 - (size_t)n, 0);
+            if (k <= 0)
+                break;
+            n += k;
+        }
         int pid = 0;
         const char *reply = "fail: bad request\n";
         int level = 0;
@@ -180,6 +215,8 @@ int main(void)
             reply = unjail(pid);
         else if (n > 0 && sscanf(line, "elevate %d %d", &pid, &level) == 2)
             reply = elevate(pid, level);
+        else if (n > 8 && !strncmp(line, "resolve ", 8))
+            reply = resolve(line + 8);
         send(c, reply, strlen(reply), 0);
         close(c);
     }

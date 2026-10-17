@@ -159,7 +159,7 @@ std::string attr(xmlNode *n, const char *name)
 /* -- config ------------------------------------------------------------------------ */
 struct Config {
     std::vector<std::pair<std::string, std::string>> feeds, sites;   /* (name, url) */
-    std::string rd_token;
+    std::string rd_token, tb_key;
 };
 
 Config load_config()
@@ -191,6 +191,8 @@ Config load_config()
     list("sites", c.sites);
     if (const char *t = cJSON_GetStringValue(cJSON_GetObjectItem(j, "realdebrid")))
         c.rd_token = t;
+    if (const char *t = cJSON_GetStringValue(cJSON_GetObjectItem(j, "torbox")))
+        c.tb_key = t;
     cJSON_Delete(j);
     return c;
 }
@@ -447,6 +449,168 @@ bool rd_list(const std::string &token, std::vector<VrSrc> &out, std::string &err
     return true;
 }
 
+/* -- TorBox --------------------------------------------------------------------------- */
+/* api.torbox.app/v1: <type>/mylist lists the account's downloads with their files,
+ * and <type>/requestdl turns one file into a short-lived CDN link. Links are asked for only
+ * when a file is chosen, so opening a big list costs three calls, not one per file. */
+const char *const kTbApi = "https://api.torbox.app/v1/api/";
+const char *const kTbTypes[] = {"torrents", "usenet", "webdl"};
+const char *const kTbIdParam[] = {"torrent_id", "usenet_id", "web_id"};
+
+int tb_type(const std::string &t)
+{
+    for (int i = 0; i < 3; i++)
+        if (t == kTbTypes[i])
+            return i;
+    return -1;
+}
+
+/* GET an API path; its JSON "data", or false + a message that never shows the key. */
+cJSON *tb_get(const std::string &key, const std::string &path, std::string &err)
+{
+    std::string body;
+    if (!http_fetch(kTbApi + path, "Authorization: Bearer " + key + "\r\n", "", body, err)) {
+        err = err.find(" 401") != std::string::npos || err.find(" 403") != std::string::npos
+                  ? "TorBox did not accept the API key"
+                  : "Could not reach TorBox";
+        return nullptr;
+    }
+    cJSON *j = cJSON_Parse(body.c_str());
+    if (!j || !cJSON_IsTrue(cJSON_GetObjectItem(j, "success"))) {
+        const char *d = j ? cJSON_GetStringValue(cJSON_GetObjectItem(j, "detail")) : nullptr;
+        err = d && *d ? std::string("TorBox: ") + d : "TorBox sent an answer PS5VR could not read";
+        cJSON_Delete(j);
+        return nullptr;
+    }
+    return j;
+}
+
+std::string tb_base(const char *n)
+{
+    const char *s = std::strrchr(n, '/');
+    return s ? s + 1 : n;
+}
+
+/* One download's video files, as SRC_TB_FILE rows. */
+void tb_files(int type, cJSON *item, std::vector<VrSrc> &out)
+{
+    const long long id = (long long)cJSON_GetNumberValue(cJSON_GetObjectItem(item, "id"));
+    cJSON *f;
+    cJSON_ArrayForEach(f, cJSON_GetObjectItem(item, "files")) {
+        const char *sn = cJSON_GetStringValue(cJSON_GetObjectItem(f, "short_name"));
+        const char *nm = cJSON_GetStringValue(cJSON_GetObjectItem(f, "name"));
+        const std::string name = sn && *sn ? sn : nm ? tb_base(nm) : "";
+        if (name.empty() || !is_video_name(name))
+            continue;
+        VrSrc v;
+        v.kind = SRC_TB_FILE;
+        v.name = name;
+        v.key = std::string(kTbTypes[type]) + ":" + std::to_string(id) + ":" +
+                std::to_string((long long)cJSON_GetNumberValue(cJSON_GetObjectItem(f, "id")));
+        v.detail = human_size(cJSON_GetNumberValue(cJSON_GetObjectItem(f, "size")));
+        out.push_back(v);
+    }
+}
+
+bool tb_ready(cJSON *item)
+{
+    return cJSON_IsTrue(cJSON_GetObjectItem(item, "download_present")) ||
+           cJSON_IsTrue(cJSON_GetObjectItem(item, "download_finished"));
+}
+
+/* Every finished download with a video: one video plays straight away, more open as a folder. */
+bool tb_list(const std::string &key, std::vector<VrSrc> &out, std::string &err)
+{
+    bool any = false;
+    std::string last_err;
+    for (int t = 0; t < 3; t++) {
+        cJSON *j = tb_get(key, std::string(kTbTypes[t]) + "/mylist?bypass_cache=true", last_err);
+        if (!j) {
+            if (last_err == "TorBox did not accept the API key") {
+                err = last_err;
+                return false;
+            }
+            continue;
+        }
+        any = true;
+        cJSON *it;
+        cJSON_ArrayForEach(it, cJSON_GetObjectItem(j, "data")) {
+            if (!tb_ready(it))
+                continue;
+            std::vector<VrSrc> vids;
+            tb_files(t, it, vids);
+            if (vids.size() == 1) {
+                out.push_back(vids[0]);
+            } else if (vids.size() > 1) {
+                VrSrc d;
+                d.kind = SRC_TB_ITEM;
+                const char *nm = cJSON_GetStringValue(cJSON_GetObjectItem(it, "name"));
+                d.name = nm && *nm ? nm : "Download";
+                d.key = std::string(kTbTypes[t]) + ":" +
+                        std::to_string((long long)cJSON_GetNumberValue(cJSON_GetObjectItem(it, "id")));
+                d.detail = std::to_string(vids.size()) + " videos";
+                out.push_back(d);
+            }
+        }
+        cJSON_Delete(j);
+    }
+    if (!any) {
+        err = last_err;
+        return false;
+    }
+    if (out.empty())
+        err = "No finished videos in your TorBox downloads";
+    return true;
+}
+
+bool tb_item(const std::string &key, const std::string &which, std::vector<VrSrc> &out, std::string &err)
+{
+    const size_t c = which.find(':');
+    const int t = tb_type(which.substr(0, c));
+    if (t < 0 || c == std::string::npos) {
+        err = "Nothing to open here";
+        return false;
+    }
+    cJSON *j = tb_get(key, std::string(kTbTypes[t]) + "/mylist?bypass_cache=true&id=" + which.substr(c + 1), err);
+    if (!j)
+        return false;
+    cJSON *d = cJSON_GetObjectItem(j, "data");
+    if (cJSON_IsArray(d))
+        d = cJSON_GetArrayItem(d, 0);
+    if (d)
+        tb_files(t, d, out);
+    cJSON_Delete(j);
+    if (out.empty())
+        err = "No videos in this download";
+    return true;
+}
+
+/* A chosen file -> its download link (requestdl wants the key as a query parameter). */
+bool tb_resolve(const std::string &key, const VrSrc &file, VrSrc &play, std::string &err)
+{
+    const size_t a = file.key.find(':'), b = file.key.find(':', a + 1);
+    const int t = a == std::string::npos ? -1 : tb_type(file.key.substr(0, a));
+    if (t < 0 || b == std::string::npos) {
+        err = "Nothing to open here";
+        return false;
+    }
+    cJSON *j = tb_get(key, std::string(kTbTypes[t]) + "/requestdl?token=" + key + "&" + kTbIdParam[t] + "=" +
+                               file.key.substr(a + 1, b - a - 1) + "&file_id=" + file.key.substr(b + 1),
+                      err);
+    if (!j)
+        return false;
+    const char *u = cJSON_GetStringValue(cJSON_GetObjectItem(j, "data"));
+    play.kind = SRC_PLAY;
+    play.name = file.name;
+    play.url = u ? u : "";
+    cJSON_Delete(j);
+    if (play.url.empty()) {
+        err = "TorBox did not give a link for this file";
+        return false;
+    }
+    return true;
+}
+
 /* -- DeoVR / HereSphere ------------------------------------------------------------------ */
 bool heresphere_url(const std::string &u) { return u.find("heresphere") != std::string::npos; }
 
@@ -593,6 +757,8 @@ bool site_group(const std::string &url, const std::string &group, std::vector<Vr
 
 bool vr_src_resolve(const VrSrc &video, VrSrc &play, std::string &err)
 {
+    if (video.kind == SRC_TB_FILE)
+        return tb_resolve(load_config().tb_key, video, play, err);
     std::string body;
     const bool hs = video.base == "heresphere";
     if (!http_fetch(video.key, hs ? "Content-Type: application/json\r\n" : "", hs ? "{}" : "", body, err))
@@ -730,6 +896,8 @@ bool vr_src_list(const VrSrc &where, std::vector<VrSrc> &out, std::string &err)
         add(SRC_RSS_LIST, "RSS feeds", "", c.feeds.empty() ? "" : std::to_string(c.feeds.size()));
         if (!c.rd_token.empty())
             add(SRC_RD, "Real-Debrid", "", "");
+        if (!c.tb_key.empty())
+            add(SRC_TB, "TorBox", "", "");
         for (const auto &s : c.sites)
             add(SRC_SITE, s.first, s.second, heresphere_url(s.second) ? "HereSphere" : "DeoVR");
         const std::string ip = vr_console_ip();
@@ -773,6 +941,10 @@ bool vr_src_list(const VrSrc &where, std::vector<VrSrc> &out, std::string &err)
         return rss_list(where.key, out, err);
     case SRC_RD:
         return rd_list(load_config().rd_token, out, err);
+    case SRC_TB:
+        return tb_list(load_config().tb_key, out, err);
+    case SRC_TB_ITEM:
+        return tb_item(load_config().tb_key, where.key, out, err);
     case SRC_SITE:
         return site_groups(where.key, out, err);
     case SRC_SITE_GROUP:
@@ -965,6 +1137,7 @@ void serve(int fd)
         cJSON_AddItemToObject(j, "sites", json_list(form_field(body, "sites")));
         cJSON_AddItemToObject(j, "feeds", json_list(form_field(body, "feeds")));
         cJSON_AddStringToObject(j, "realdebrid", form_field(body, "rd").c_str());
+        cJSON_AddStringToObject(j, "torbox", form_field(body, "tb").c_str());
         char *txt = cJSON_Print(j);
         mkdir(PS5VR_DIR, 0777);
         if (FILE *f = std::fopen(PS5VR_CONFIG, "wb")) {
@@ -1006,7 +1179,7 @@ void serve(int fd)
                 "<option value=''>Video type: detect from the name</option>"
                 "<option value='180_sbs'>180&deg; 3D side by side</option><option value='360_tb'>360&deg; 3D top-bottom</option>"
                 "<option value='360'>360&deg; 2D</option><option value='180'>180&deg; 2D</option>"
-                "<option value='flat_sbs'>Flat 3D side by side</option><option value='flat'>Flat 2D</option></select>"
+                "<option value='flat_sbs'>Flat 3D side by side</option><option value='flat_fs'>Flat 3D frame sequential</option><option value='flat'>Flat 2D</option></select>"
                 "<button>Play</button><small style='display:block;margin-top:.6em'>Direct links to a video file "
                 "(.mp4, .mkv...). Plays in the headset straight away.</small></form>";
         page += "<form method=post action=/save>"
@@ -1019,6 +1192,9 @@ void serve(int fd)
                 "</textarea><small>One per line: <code>Name | URL</code>. Items with a video enclosure are listed.</small>"
                 "<label>Real-Debrid API token</label><input name=rd value='" + html_escape(c.rd_token) +
                 "' placeholder='from real-debrid.com/apitoken'><small>Lists your Real-Debrid downloads.</small>"
+                "<label>TorBox API key</label><input name=tb value='" + html_escape(c.tb_key) +
+                "' placeholder='from torbox.app/settings'><small>Lists your finished TorBox torrents, usenet and "
+                "web downloads.</small>"
                 "<button>Save</button></form>"
                 "<p style='margin-top:3em;color:#6b7a96;font-size:.9em'>PS5VR is free. If you enjoy it, you can "
                 "<a style='color:#93a3c0' href='https://buymeacoffee.com/theghostonline'>support it here</a>.</p>"

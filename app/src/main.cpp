@@ -319,7 +319,7 @@ int main()
     /* /data and USB drives: ps5vr-helper (or etaHEN's jailbreak daemon) opens
      * the sandbox - after every system module is loaded, because they load
      * through the sandbox's own path. */
-    app_vr_preload();
+    const bool vr_ok = app_vr_preload() == 0;
     eng_bt("ps5vr: sandbox %s", eng_jailbreak_self() ? "open" : "closed (retrying)");
     wait_for_service();
     app_control_start();
@@ -341,7 +341,10 @@ int main()
         app_vr_set_options(&o);
     }
     for (;;) {
-        draw_home("Put on your PlayStation VR2");
+        /* No headset without its libraries: say why instead of waiting forever. */
+        draw_home(vr_ok ? "Put on your PlayStation VR2"
+                  : app_vr_helper_missing() ? "Load ps5vr-helper.elf, then start PS5VR again"
+                  : "This firmware isn't supported yet");
         char *req = nullptr;
         std::string path, title, vr;
         int got = 0, poll = 0;

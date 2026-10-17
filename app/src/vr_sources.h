@@ -1,6 +1,6 @@
 /*
  * vr_sources - where PS5VR finds videos: folders (this PS5, USB, extended
- * storage), DLNA/UPnP media servers, RSS feeds, Real-Debrid, and DeoVR /
+ * storage), DLNA/UPnP media servers, RSS feeds, Real-Debrid, TorBox, and DeoVR /
  * HereSphere library sites. Every call blocks (network, disk); the library
  * runs them on a worker thread.
  */
@@ -17,6 +17,9 @@ enum VrSrcKind {
     SRC_RSS_LIST,    /* the configured feeds */
     SRC_RSS,         /* key = feed URL */
     SRC_RD,          /* Real-Debrid downloads */
+    SRC_TB,          /* TorBox: finished torrents, usenet and web downloads */
+    SRC_TB_ITEM,     /* key = "<torrents|usenet|webdl>:<id>": one download's videos */
+    SRC_TB_FILE,     /* key = "<type>:<id>:<file id>": its link is asked for when chosen */
     SRC_SITE,        /* key = DeoVR / HereSphere library URL */
     SRC_SITE_GROUP,  /* key = site URL, base = group name */
     SRC_SITE_VIDEO,  /* key = a scene URL: resolved to its file when chosen */
@@ -35,7 +38,7 @@ struct VrSrc {
 
 /* The entries of `where` (a SRC_* container). false + err when it failed. */
 bool vr_src_list(const VrSrc &where, std::vector<VrSrc> &out, std::string &err);
-/* A SRC_SITE_VIDEO chosen: its playable file (url, vr, name). */
+/* A SRC_SITE_VIDEO or SRC_TB_FILE chosen: its playable file (url, vr, name). */
 bool vr_src_resolve(const VrSrc &video, VrSrc &play, std::string &err);
 
 /* Hands & eyes control (experimental), kept in /data/ps5vr/prefs.json. */
@@ -50,7 +53,7 @@ void vr_prefs_set_hdr(bool on);
 bool vr_prefs_mirror(void);
 void vr_prefs_set_mirror(bool on);
 
-/* The settings (sites, feeds, Real-Debrid token) in /data/ps5vr/config.json,
+/* The settings (sites, feeds, Real-Debrid token, TorBox key) in /data/ps5vr/config.json,
  * edited from a phone or computer at http://<console>:<port>/. */
 void vr_settings_server_start(void);
 int  vr_settings_server_port(void);

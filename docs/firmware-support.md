@@ -24,6 +24,19 @@ console.
 `libSceSystemService` (clean exit) is still needed for 13.40, 11.60, 8.40, 7.20
 and 7.61; without it the app ends its own process instead.
 
+## Any other firmware (1.3.0 and later)
+
+When no table matches, PS5VR asks `ps5vr-helper.elf` to look each function up
+by its NID in the kernel's copy of the library's symbol table (the helper's
+`resolve` command, using the payload SDK's `kernel_dynlib_resolve`). That works
+on any firmware the helper runs on, so 11.40 and others start without a table,
+as long as the helper is loaded before PS5VR. Hand tracking stays off there,
+because its API changed in 12.20. Checked on 13.60 with the tables switched
+off: every address the helper returned matched the table.
+
+If the helper isn't running, the TV says so instead of waiting on "Put on your
+PlayStation VR2".
+
 Libraries were shared by @rmznoky (5.50), @tertiumndatur (7.20), @tvk-source
 (7.61), @Vorenu5 (8.40), @hu601 (10.00), @S4m1n9 (10.01), @ytc44 (10.40), @hsv2049cs (10.60),
 @jimicaoo (11.60), @mschifino (12.20), @mtp-24 (12.40), @Gitlizard2 (13.20)

@@ -17,7 +17,7 @@ extern "C" {
 
 typedef struct app_vr_format {
     int projection;     /* 360, 180, or 0 = flat screen */
-    int stereo;         /* 0 mono, 1 side by side, 2 top-bottom */
+    int stereo;         /* 0 mono, 1 side by side, 2 top-bottom, 5 frame sequential */
 } app_vr_format;
 
 /* Picture options (defaults: sharpen -1 = auto, 10-bit, eye 0 = 2816 px). */
@@ -40,8 +40,9 @@ int  app_vr_worn(void);
 /* Show the headset's view on the TV (Hmd2 mirroring); off by default. */
 void app_vr_set_mirror(int on);
 
-/* "360_tb", "360_sbs", "360", "180_sbs", "180", "flat_sbs", "flat" (case and
- * separators ignored; "lr" = sbs, "ou" = tb). 1 if s names a VR format. */
+/* "360_tb", "360_sbs", "360", "180_sbs", "180", "flat_sbs", "flat_fs", "flat"
+ * (case and separators ignored; "lr" = sbs, "ou" = tb, "fs"/"fseq" = frame
+ * sequential). 1 if s names a VR format. */
 int  app_vr_parse(const char *s, app_vr_format *out);
 /* Guess the format from a file name or title ("..._360_TB.mp4"). */
 int  app_vr_guess(const char *name, app_vr_format *out);
@@ -52,6 +53,8 @@ void app_vr_fit_frame(app_vr_format *f, int w, int h);
 /* Enter VR output (fmt NULL: nothing playing - the empty space). 0 on success. */
 /* Loads the headset modules; must run before the sandbox is opened. */
 int  app_vr_preload(void);
+/* 1 when the firmware has no export table and ps5vr-helper did not answer. */
+int  app_vr_helper_missing(void);
 /* Binds the named exports of another VR system library (before the sandbox
  * opens). 0 when all were found. */
 int  app_vr_bind(const char *lib, const char *const *names, void **slots, int n);

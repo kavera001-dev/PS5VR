@@ -12,7 +12,8 @@ PS VR2 compositor, at 120 Hz.
 > Homebrew. Not affiliated with or endorsed by Sony. It plays your own files
 > and the sources you point it at; it includes no content.
 
-Firmware 5.50 to 13.60 are supported from 1.2.1, see
+Firmware 5.50 to 13.60 are supported from 1.2.1. From 1.3.0 other firmware
+work too while `ps5vr-helper.elf` is loaded, see
 [docs/firmware-support.md](docs/firmware-support.md).
 
 ## Features
@@ -32,6 +33,9 @@ Firmware 5.50 to 13.60 are supported from 1.2.1, see
 **Formats**
 - 360° and 180° (equirectangular), mono, side-by-side or top-bottom
 - Flat 2D and flat 3D (full and half SBS, OU) on a screen of your size
+- Frame-sequential 3D (left and right eye in alternating frames, e.g. 48 fps
+  files from 24 fps 3D movies): pick it in the View menu, or tag the file name
+  with `_FS` / `_FSEQ`
 - Spatial video (MV-HEVC) and 3D Blu-ray (H.264 MVC), both eyes
 - Format detection from the file name and the picture's shape, overridable
   in the View menu
@@ -49,6 +53,8 @@ Firmware 5.50 to 13.60 are supported from 1.2.1, see
 - DeoVR and HereSphere libraries (Stash, XBVR and many VR sites)
 - Real-Debrid downloads, with parallel read-ahead (6 connections) for big
   files over the internet
+- TorBox: your finished torrents, usenet and web downloads (add the API key
+  on the settings page)
 - A settings page on your phone or computer for feeds, libraries and tokens
 
 **In the headset**
@@ -81,7 +87,7 @@ kstuff, ShadowMount+ and etaHEN, and on 12.40) and a PS VR2.
 3. Put videos in `/data/ps5vr/videos` (FTP), on a USB drive, or on a media
    server, and start PS5VR from the home screen with the headset on.
 
-Settings for feeds, DeoVR/HereSphere libraries and Real-Debrid are at
+Settings for feeds, DeoVR/HereSphere libraries, Real-Debrid and TorBox are at
 `http://<your PS5's IP>:8090` (shown in the library).
 
 ---
@@ -130,8 +136,10 @@ LLPC for gfx1013; their generators are in `app/tools/shaders/`.
 - `tools/ps5_dynlib.py` reads decrypted system libraries (exports, imports,
   NIDs) and `tools/gen_export_table.py` writes the export offsets the app uses.
 
-Each firmware needs its own export table, generated from that firmware's own
-libraries. Supported firmware, and how to add another, are in
+Each firmware has its own export table, generated from that firmware's own
+libraries. On a firmware without one, ps5vr-helper looks the functions up by
+NID in the kernel's copy of each library's symbol table instead. Supported
+firmware, and how to add another, are in
 [docs/firmware-support.md](docs/firmware-support.md). Wrong-firmware tables
 fail safely: each one carries an anchor string that is checked before any
 offset is used.

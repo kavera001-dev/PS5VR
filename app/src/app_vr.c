@@ -20,6 +20,11 @@
 #include <stdio.h>
 
 #include "eng_agc_runtime.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <libavutil/base64.h>
+#include <libavutil/mem.h>
+#include <libavutil/sha.h>
 #include "eng_boot_trace.h"
 #include "eng_vr_audio.h"
 #include "vr_system.h"
@@ -207,8 +212,83 @@ static const export_table_t *module_table(int h, const char *file, const export_
     return NULL;
 }
 
+/* An export's NID: base64 (+ and -) of the first 8 bytes of
+ * sha1(name + suffix), reversed; 11 characters. */
+static void nid_of(const char *name, char out[12])
+{
+    static const uint8_t kSuffix[16] = {0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1,
+                                        0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30};
+    uint8_t d[20], r[8];
+    char b[16];
+    struct AVSHA *sha = av_sha_alloc();
+    out[0] = 0;
+    if (!sha)
+        return;
+    av_sha_init(sha, 160);
+    av_sha_update(sha, (const uint8_t *)name, strlen(name));
+    av_sha_update(sha, kSuffix, sizeof kSuffix);
+    av_sha_final(sha, d);
+    av_free(sha);
+    for (int i = 0; i < 8; i++)
+        r[i] = d[7 - i];
+    if (!av_base64_encode(b, sizeof b, r, sizeof r))
+        return;
+    for (int i = 0; i < 11; i++)
+        out[i] = b[i] == '/' ? '-' : b[i];
+    out[11] = 0;
+}
+
+/* -1 ps5vr-helper did not answer, 1 it resolved a library, 0 not asked. */
+static int s_helper_resolve;
+
+/* No export table for this firmware: ps5vr-helper reads the library's symbol
+ * table from the kernel and answers each missing export's address by its NID,
+ * which works on any firmware. */
+static void helper_resolve(int h, const char *file, slot_t *slots, size_t n)
+{
+    char req[2048], reply[2048], nid[12];
+    int len = snprintf(req, sizeof req, "resolve %d %d", (int)getpid(), h);
+    size_t asked = 0;
+    for (size_t i = 0; i < n && len < (int)sizeof req - 16; i++)
+        if (!*slots[i].slot) {
+            nid_of(slots[i].name, nid);
+            len += snprintf(req + len, sizeof req - (size_t)len, " %s", nid[0] ? nid : "-");
+            asked++;
+        }
+    snprintf(req + len, sizeof req - (size_t)len, "\n");
+    if (!asked)
+        return;
+    if (vr_helper_ask(req, reply, sizeof reply) != 0 || strncmp(reply, "ok", 2)) {
+        eng_bt("vr: %s: ps5vr-helper %s", file, reply[0] ? reply : "is not running");
+        if (!reply[0])
+            s_helper_resolve = -1;
+        return;
+    }
+    const char *p = reply + 2;
+    size_t got = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (*slots[i].slot)
+            continue;
+        char *end = NULL;
+        const unsigned long long a = strtoull(p, &end, 16);
+        if (end == p)
+            break;
+        p = end;
+        *slots[i].slot = (void *)(uintptr_t)a;
+        got += a != 0;
+    }
+    if (s_helper_resolve == 0)
+        s_helper_resolve = 1;
+    eng_bt("vr: %s by ps5vr-helper (no table for this firmware): %zu of %zu exports", file, got, asked);
+}
+
+int app_vr_helper_missing(void)
+{
+    return s_helper_resolve < 0;
+}
+
 static int resolve_module(int h, const char *file, slot_t *slots, size_t n,
-                          const export_table_t *tables, size_t tables_n)
+                          const export_table_t *tables, size_t tables_n, int ask_helper)
 {
     uintptr_t base = 0;
     const export_table_t *t = NULL;
@@ -218,6 +298,9 @@ static int resolve_module(int h, const char *file, slot_t *slots, size_t n,
             continue;
         if (!tried_base) {
             t = module_table(h, file, tables, tables_n, &base);
+#ifdef PS5VR_TEST_HELPER_RESOLVE
+            t = NULL;               /* test build: as on a firmware with no table */
+#endif
             tried_base = 1;
             if (t)
                 eng_bt("vr: %s by export offsets (table %d.%02d), base %p", file, t->fw / 100,
@@ -229,7 +312,30 @@ static int resolve_module(int h, const char *file, slot_t *slots, size_t n,
         for (size_t j = 0; t && j < t->count; j++)
             if (!strcmp(t->exports[j].name, slots[i].name))
                 *slots[i].slot = (void *)(base + t->exports[j].offset);
-        if (!*slots[i].slot && t && slots[i].optional) {
+    }
+    if (!t && tried_base && ask_helper)
+        helper_resolve(h, file, slots, n);
+#ifdef PS5VR_TEST_HELPER_RESOLVE
+    {   /* test build: the helper's answers against this firmware's table */
+        uintptr_t tb = 0;
+        const export_table_t *real = module_table(h, file, tables, tables_n, &tb);
+        int same = 0, diff = 0;
+        for (size_t i = 0; real && i < n; i++)
+            for (size_t j = 0; j < real->count; j++)
+                if (!strcmp(real->exports[j].name, slots[i].name)) {
+                    if ((uintptr_t)*slots[i].slot == tb + real->exports[j].offset)
+                        same++;
+                    else {
+                        diff++;
+                        eng_bt("vr: test: %s helper %p table %p", slots[i].name, *slots[i].slot,
+                               (void *)(tb + real->exports[j].offset));
+                    }
+                }
+        eng_bt("vr: test: %s helper vs table: %d same, %d different", file, same, diff);
+    }
+#endif
+    for (size_t i = 0; i < n; i++) {
+        if (!*slots[i].slot && (t || s_helper_resolve > 0) && slots[i].optional) {
             eng_bt("vr: %s not on this firmware", slots[i].name);
         } else if (!*slots[i].slot) {
             eng_bt("vr: missing %s", slots[i].name);
@@ -612,7 +718,9 @@ int app_vr_bind(const char *lib, const char *const *names, void **slots, int n)
             sl[i].slot = &slots[i];
             sl[i].optional = 0;
         }
-        return resolve_module(h, file, sl, (size_t)n, kLibs[k].tables, kLibs[k].count);
+        /* hand tracking's API differs before 12.20: only the tables' firmware */
+        return resolve_module(h, file, sl, (size_t)n, kLibs[k].tables, kLibs[k].count,
+                              strcmp(lib, "libSceVrHand") != 0);
     }
     return -1;
 }
@@ -627,12 +735,12 @@ int app_vr_preload(void)
     done = -1;
     int h = load_sysmodule(SYSMODULE_HMD2, "libSceHmd2");
     if (h < 0 || resolve_module(h, "libSceHmd2.sprx", kHmd2Slots, COUNT(kHmd2Slots),
-                                klibSceHmd2Tables, COUNT(klibSceHmd2Tables)))
+                                klibSceHmd2Tables, COUNT(klibSceHmd2Tables), 1))
         return -1;
     h = load_sysmodule(SYSMODULE_VRTRACKER2, "libSceVrTracker2");
     if (h < 0 || resolve_module(h, "libSceVrTracker2.sprx", kVrTracker2Slots,
                                 COUNT(kVrTracker2Slots), klibSceVrTracker2Tables,
-                                COUNT(klibSceVrTracker2Tables)))
+                                COUNT(klibSceVrTracker2Tables), 1))
         return -1;
     done = 1;
     vr_system_preload();
@@ -1027,6 +1135,7 @@ void app_vr_head_dir(float *y, float *p) { if (y) *y = 0; if (p) *p = 0; }
 uint64_t app_vr_frame_time(void) { return 0; }
 void app_vr_camera_probe(void) {}
 uintptr_t app_vr_lib_base(const char *lib, int *fw) { (void)lib; if (fw) *fw = 0; return 0; }
+int app_vr_helper_missing(void) { return 0; }
 int app_vr_gaze(void *result) { (void)result; return -1; }
 void app_vr_to_view(const float p[3], float out[3]) { out[0] = p[0]; out[1] = p[1]; out[2] = p[2]; }
 void app_vr_vibrate(int strength) { (void)strength; }
@@ -1082,6 +1191,13 @@ static int contains(const char *s, const char *sub)
 
 static int stereo_of(const char *s)
 {
+    /* frame sequential (alternating left/right frames) only when it says so:
+     * the frames look like ordinary video */
+    if (has_token(s, "fs") || has_token(s, "fseq") || has_token(s, "frameseq") ||
+        contains(s, "framesequential") || contains(s, "frame-sequential") ||
+        contains(s, "frame_sequential") || contains(s, "frame.sequential") ||
+        contains(s, "frame sequential"))
+        return 5;
     if (has_token(s, "tb") || has_token(s, "ou") || has_token(s, "3dv") || has_token(s, "hou") ||
         has_token(s, "fou") || has_token(s, "tab") || has_token(s, "htab") ||
         contains(s, "half-ou") || contains(s, "half.ou") || contains(s, "h-ou") ||
