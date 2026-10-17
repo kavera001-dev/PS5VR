@@ -152,9 +152,9 @@ ARCHIVES=()
 # The overlay: libass (subtitles), FreeType/HarfBuzz/fribidi (text), and the
 # image decoders for artwork. libass links fontconfig, which is never used.
 for a in libavformat libavcodec libswresample libavutil libswscale \
-         libass libharfbuzz libfribidi libfontconfig libexpat libfreetype \
+         libx264 libass libharfbuzz libfribidi libfontconfig libexpat libfreetype \
          libpng16 libjpeg libwebp libsharpyuv \
-         libssl libcrypto libiconv libxml2 libz libbz2 liblzma libzstd libx264 libm; do
+         libssl libcrypto libiconv libxml2 libz libbz2 liblzma libzstd libm; do
     need "${HB}/lib/${a}.a" "sysroot archive missing: ${a}.a"
     ARCHIVES+=("${HB}/lib/${a}.a")
 done

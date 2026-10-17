@@ -357,6 +357,10 @@ static int s_hevc_max_tid;
  * rate from its first picture - not after seconds of late, out-of-sync video. */
 #define VR_DECODE_MAX_PX_S  1.2e9
 
+/* Frame-sequential 3D support from the VR runtime. */
+void eng_agc_vr_set_frame_rate(double fps, int64_t start_us);
+int  eng_agc_vr_frameseq(void);
+
 /* A new file: forget the last one's state, and judge this one's rate. */
 static void vr_file_state(const AVFormatContext *fmt, int vstream)
 {
@@ -374,6 +378,9 @@ static void vr_file_state(const AVFormatContext *fmt, int vstream)
     const AVCodecParameters *par = st->codecpar;
     AVRational r = st->avg_frame_rate.num > 0 ? st->avg_frame_rate : st->r_frame_rate;
     const double fps = (r.num > 0 && r.den > 0) ? (double)r.num / r.den : 0.0;
+    eng_agc_vr_set_frame_rate(fps, st->start_time != AV_NOPTS_VALUE
+                                        ? av_rescale_q(st->start_time, st->time_base, (AVRational){ 1, 1000000 })
+                                        : 0);
     const double px_s = (double)par->width * par->height * fps;
     if (px_s > VR_DECODE_MAX_PX_S &&
         (par->codec_id == AV_CODEC_ID_HEVC || par->codec_id == AV_CODEC_ID_H264) &&
@@ -728,7 +735,7 @@ int decode_next_video_frame(void)
         /* Hardware decoder only: a software multiview stream carries its two
          * views per access unit, and skipping one would split a pair. */
         vr_file_state(play_fmt, video_stream_index);
-        if ((s_half_rate || s_video_late_s > 2.0 * VR_LATE_S) && play_fmt &&
+        if ((s_half_rate || s_video_late_s > 2.0 * VR_LATE_S) && play_fmt && !eng_agc_vr_frameseq() &&
             video_stream_index >= 0 && eng_vdec_active(g_vdec) == ENG_VDEC_BACKEND_NATIVE &&
             !(g_pp_pb.active && g_pp_pb.seek_discarding) &&
             au_droppable(video_video_pending_pkt,

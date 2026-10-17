@@ -795,8 +795,8 @@ enum MenuRow { ROW_TYPE, ROW_LAYOUT, ROW_SWAP, ROW_SCREEN, ROW_SHARPEN, ROW_SMOO
                ROW_AUDIO, ROW_MIRROR, ROW_HANDS, ROW_RECENTRE, ROW_COUNT };
 const char *kTypes[] = {"Auto", "360\xC2\xB0", "180\xC2\xB0", "Flat screen"};
 const int kTypeVal[] = {-1, 360, 180, 0};
-const char *kLayouts[] = {"Auto", "2D (mono)", "3D side by side", "3D top-bottom"};
-const int kLayoutVal[] = {-1, 0, 1, 2};
+const char *kLayouts[] = {"Auto", "2D (mono)", "3D side by side", "3D top-bottom", "Frame Sequential"};
+const int kLayoutVal[] = {-1, 0, 1, 2, 5};
 const char *kScreens[] = {"Small", "Medium", "Large", "Huge"};
 const float kScreenDeg[] = {50, 70, 90, 115};
 const char *kSharpen[] = {"Auto", "Off", "Sharpen", "Upscale + sharpen"};
@@ -842,7 +842,7 @@ void VrMenu::input(const app_input_state &in)
         vr_ui_apply_format();
         break;
     case ROW_LAYOUT:
-        s.stereo = kLayoutVal[(index_of(kLayoutVal, s.stereo) + 4 + d) % 4];
+        s.stereo = kLayoutVal[(index_of(kLayoutVal, s.stereo) + 5 + d) % 5];
         vr_ui_apply_format();
         break;
     case ROW_SWAP:

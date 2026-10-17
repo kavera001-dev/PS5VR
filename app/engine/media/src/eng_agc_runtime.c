@@ -2102,9 +2102,16 @@ static struct {
     int64_t  fg_prev_pts;
     int      fg_have_prev, fg_d, fg_pending, fg_active;
     unsigned fg_frames;
+    /* Frame-sequential 3D: build the left/right pair side by side. */
+    uint8_t *fs_mem;
+    int64_t  fs_off, fs_pts, fs_start_us;
+    size_t   fs_bytes;
+    uint32_t fs_w, fs_h;
+    int      fs_have_left;
+    double   fs_fps;
 } s_vr = { .mem_off = -1, .src_off = -1, .src_pts = INT64_MIN, .up_off = -1, .sh_off = -1,
           .fg_on = 1, .fg_prev_off = -1, .fg_mid_off = -1, .fg_small_off = -1, .fg_prev_pts = INT64_MIN,
-          .sharpen_max_k = 2.0f };
+          .sharpen_max_k = 2.0f, .fs_off = -1, .fs_pts = INT64_MIN };
 
 /* 64 KB tiles of 128x128 RGBA8 pixels. */
 static size_t vr_tiled_bytes(uint32_t w, uint32_t h)
@@ -2237,9 +2244,33 @@ void eng_agc_vr_panel(const uint32_t *px, int w, int h, int upload, int show, fl
 
 void eng_agc_vr_set_view(const eng_agc_vr_view_t *view)
 {
+    /* Rebuild the held picture when entering/leaving frame-sequential mode. */
+    if (view && s_vr.view_set &&
+        (view->stereo == ENG_AGC_VR_FRAMESEQ) != (s_vr.view.stereo == ENG_AGC_VR_FRAMESEQ)) {
+        s_vr.src_pts = s_vr.fs_pts = INT64_MIN;
+        s_vr.fs_have_left = 0;
+    }
     s_vr.view_set = view != NULL;
     if (view)
         s_vr.view = *view;
+}
+
+void eng_agc_vr_set_frame_rate(double fps, int64_t start_us)
+{
+    s_vr.fs_fps = fps;
+    s_vr.fs_start_us = start_us;
+}
+
+int eng_agc_vr_frameseq(void)
+{
+    return s_vr.view_set && s_vr.view.stereo == ENG_AGC_VR_FRAMESEQ;
+}
+
+/* Reset only the temporal eye-pairing state after a successful seek. */
+void eng_agc_vr_frameseq_reset(void)
+{
+    s_vr.fs_have_left = 0;
+    s_vr.fs_pts = INT64_MIN;
 }
 
 void eng_agc_vr_set_submit(void (*submit)(void))
@@ -2254,7 +2285,8 @@ int eng_agc_vr_has_picture(void)
 
 void eng_agc_vr_reset_picture(void)
 {
-    s_vr.src_pts = INT64_MIN;
+    s_vr.src_pts = s_vr.fs_pts = INT64_MIN;
+    s_vr.fs_have_left = 0;
     /* a new video: no previous picture, and its sound starts unshifted */
     s_vr.fg_have_prev = s_vr.fg_pending = s_vr.fg_active = 0;
     s_vr.fg_prev_pts = INT64_MIN;
@@ -4162,7 +4194,7 @@ static void vr_uv(const eng_agc_vr_view_t *v, int eye, float ul, float vl, float
         ul = (ul + (float)eye) * 0.5f;
     else if (v->stereo == ENG_AGC_VR_TB)
         vl = (vl + (float)eye) * 0.5f;
-    else if (v->stereo == ENG_AGC_VR_SBS_LEFT)
+    else if (v->stereo == ENG_AGC_VR_SBS_LEFT || v->stereo == ENG_AGC_VR_FRAMESEQ)
         ul *= 0.5f;
     else if (v->stereo == ENG_AGC_VR_TB_TOP)
         vl *= 0.5f;
@@ -4198,7 +4230,8 @@ static uint32_t vr_build_mesh(const eng_agc_vr_view_t *v, int eye, uint64_t *vtx
      * (a 1920x1080 frame holding two squeezed eyes) are shown at the frame's
      * own aspect; full-size ones at half of it. */
     float aspect = s_vr.src_h ? (float)s_vr.src_w / (float)s_vr.src_h : 16.0f / 9.0f;
-    const int sbs = v->stereo == ENG_AGC_VR_SBS || v->stereo == ENG_AGC_VR_SBS_LEFT;
+    const int sbs = v->stereo == ENG_AGC_VR_SBS || v->stereo == ENG_AGC_VR_SBS_LEFT ||
+                    v->stereo == ENG_AGC_VR_FRAMESEQ;
     const int tb = v->stereo == ENG_AGC_VR_TB || v->stereo == ENG_AGC_VR_TB_TOP;
     if (sbs && aspect * 0.5f >= 1.2f)
         aspect *= 0.5f;                                   /* full SBS */
@@ -4639,7 +4672,8 @@ static void vr_sharpen(void)
     const float deg = v->projection == ENG_AGC_VR_360 ? 360.0f
                     : v->projection == ENG_AGC_VR_180 ? 180.0f
                     : (v->screen_deg > 1.0f ? v->screen_deg : 70.0f);
-    const float eye_px = (v->stereo == ENG_AGC_VR_SBS || v->stereo == ENG_AGC_VR_SBS_LEFT)
+    const float eye_px = (v->stereo == ENG_AGC_VR_SBS || v->stereo == ENG_AGC_VR_SBS_LEFT ||
+                          v->stereo == ENG_AGC_VR_FRAMESEQ)
                              ? s_vr.src_w * 0.5f : (float)s_vr.src_w;
     const float px_deg = eye_px / deg;
     int mode = v->sharpen;
@@ -4874,6 +4908,76 @@ int eng_agc_vr_read_eye(uint32_t *bgra, int shrink, int left_only, int *out_w, i
 }
 #endif
 
+#ifdef APP_VR
+/*
+ * Frame-sequential 3D: alternate decoded frames between left and right eyes.
+ * Each eye is drawn into one half of a side-by-side surface. A completed pair
+ * becomes the held source picture used by the normal VR projection path.
+ */
+static int vr_fs_half(int pipe_id, uint32_t w, uint32_t h, int half)
+{
+    agc_up_surface_t t = { (uint64_t)(uintptr_t)s_vr.fs_mem, 2u * w, h,
+                           s_vr.src_fp16, 0, s_vr.src_fp16 ? 0 : s_vr.ten_bit };
+    if (agc_up_bind_target(&t, half * (int)w, 0, (int)w, (int)h) != 0)
+        return -1;
+    eng_agc_runtime_bind_pipeline(pipe_id);
+    eng_agc_writer_draw_index_modifier(&g_agc_dev.current_cb, 6, g_agc_dev.quad_indices,
+                                       g_agc_dev.pipelines[pipe_id].draw_modifier);
+    eng_agc_flush_color_target();
+    return 0;
+}
+
+static int vr_frameseq(int pipe_id, uint32_t w, uint32_t h, int64_t pts_us)
+{
+    s_vr.fg_pending = s_vr.fg_active = 0;
+    if (vr_surface(&s_vr.fs_mem, &s_vr.fs_off, &s_vr.fs_bytes,
+                   fg_tiled_bytes(2u * w, h, s_vr.src_fp16)) != 0)
+        return -2;
+    if (s_vr.fs_w != w || s_vr.fs_h != h) {
+        s_vr.fs_w = w;
+        s_vr.fs_h = h;
+        s_vr.fs_have_left = 0;
+    }
+
+    const double fps = s_vr.fs_fps > 1.0 ? s_vr.fs_fps : 48.0;
+    const int right = (int)(llround((double)(pts_us - s_vr.fs_start_us) * fps / 1e6) & 1);
+    const int shown = s_vr.src_mem && s_vr.src_pts != INT64_MIN &&
+                      s_vr.src_w == 2u * w && s_vr.src_h == h;
+    s_vr.fs_pts = pts_us;
+
+    if (!right) {
+        if (vr_fs_half(pipe_id, w, h, 0) != 0)
+            return -2;
+        s_vr.fs_have_left = 1;
+        if (shown)
+            return vr_project();
+        return 0;
+    }
+
+    /* If no left eye has arrived (e.g. after a seek), duplicate this picture. */
+    if ((!right || !s_vr.fs_have_left) && vr_fs_half(pipe_id, w, h, 0) != 0)
+        return -2;
+    if (vr_fs_half(pipe_id, w, h, 1) != 0)
+        return -2;
+
+    uint8_t *m = s_vr.src_mem;
+    int64_t o = s_vr.src_off;
+    size_t b = s_vr.src_bytes;
+    s_vr.src_mem = s_vr.fs_mem;
+    s_vr.src_off = s_vr.fs_off;
+    s_vr.src_bytes = s_vr.fs_bytes;
+    s_vr.fs_mem = m;
+    s_vr.fs_off = m ? o : -1;
+    s_vr.fs_bytes = m ? b : 0;
+    s_vr.src_w = 2u * w;
+    s_vr.src_h = h;
+    s_vr.src_pts = pts_us;
+    s_vr.fs_have_left = 0;
+    vr_sharpen();
+    return vr_project();
+}
+#endif
+
 /* The Off quad's NDC half-extents for Fit (0) / Fill (1) / Stretch (2). */
 static void agc_video_scale(int disp_w, int disp_h, int view_mode, float *sx, float *sy)
 {
@@ -4911,7 +5015,9 @@ int eng_agc_blit_yuv(const uint8_t *y,  int y_pitch,
     eng_agc_transient_ring_t *ring = &g_agc_dev.transient_ring;
 #ifdef APP_VR
     const int vr = s_vr.view_set;
-    if (vr && pts_us == s_vr.src_pts && s_vr.src_mem) {
+    if (vr && s_vr.src_mem &&
+        (pts_us == s_vr.src_pts ||
+         (s_vr.view.stereo == ENG_AGC_VR_FRAMESEQ && pts_us == s_vr.fs_pts))) {
         if (s_vr.fg_pending) {       /* the in-between picture had this slot's turn */
             s_vr.fg_pending = 0;
             s_vr.fin_addr = (uint64_t)(uintptr_t)s_vr.src_mem;
@@ -5193,6 +5299,12 @@ int eng_agc_blit_yuv(const uint8_t *y,  int y_pitch,
 #ifdef APP_VR
     /* PS5VR: the picture at source size into the source surface, then both eyes. */
     if (vr) {
+        if (s_vr.view.stereo == ENG_AGC_VR_FRAMESEQ) {
+            const int rc = vr_frameseq(pipe_id, src_w, src_h, pts_us);
+            if (rc < -1)
+                agc_up_restore_scanout();
+            return rc < -1 ? -1 : rc;
+        }
         vr_fg_swap(pts_us);
         if (vr_bind_source(src_w, src_h) != 0) {
             agc_up_restore_scanout();

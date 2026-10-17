@@ -362,6 +362,7 @@ enum {
     ENG_AGC_VR_TB = 2,         /* left eye in the top half */
     ENG_AGC_VR_TB_TOP = 3,     /* top half to both eyes (bottom = depth map) */
     ENG_AGC_VR_SBS_LEFT = 4,   /* left half to both eyes (right = depth map) */
+    ENG_AGC_VR_FRAMESEQ = 5,   /* frame sequential: even frames left eye, odd right */
 };
 typedef struct eng_agc_vr_view {
     int   buffer;              /* eye buffer to draw */
@@ -409,6 +410,11 @@ int  eng_agc_runtime_video_handle(void);
 int  eng_agc_vr_has_picture(void);
 /* Forget the held picture (a new video starts). */
 void eng_agc_vr_reset_picture(void);
+/* Frame rate and first timestamp used by frame-sequential stereo. */
+void eng_agc_vr_set_frame_rate(double fps, int64_t start_us);
+/* 1 while frame-sequential playback is active. */
+int  eng_agc_vr_frameseq(void);
+void eng_agc_vr_frameseq_reset(void);
 #endif
 
 #ifdef __cplusplus

@@ -1026,6 +1026,11 @@ static int contains(const char *s, const char *sub)
 
 static int stereo_of(const char *s)
 {
+    if (has_token(s, "fs") || has_token(s, "fseq") || has_token(s, "frameseq") ||
+        contains(s, "framesequential") || contains(s, "frame-sequential") ||
+        contains(s, "frame_sequential") || contains(s, "frame.sequential") ||
+        contains(s, "frame sequential"))
+        return 5;
     if (has_token(s, "tb") || has_token(s, "ou") || has_token(s, "3dv") || has_token(s, "hou") ||
         has_token(s, "fou") || has_token(s, "tab") || has_token(s, "htab") ||
         contains(s, "half-ou") || contains(s, "half.ou") || contains(s, "h-ou") ||
@@ -1061,7 +1066,9 @@ int app_vr_parse(const char *s, app_vr_format *out)
 
 void app_vr_fit_frame(app_vr_format *f, int w, int h)
 {
-    if (!f || w <= 0 || h <= 0 || (f->projection != 360 && f->projection != 180))
+    /* Frame-sequential is a temporal layout, not an image-aspect layout. */
+    if (!f || w <= 0 || h <= 0 || f->stereo == 5 ||
+        (f->projection != 360 && f->projection != 180))
         return;
     const float a = (float)w / (float)h;
     /* frame aspect of each layout: [mono, sbs, tb] (full-size eyes; half-size
