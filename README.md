@@ -1,6 +1,6 @@
 # PS5VR
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-Support_the_project-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/theghostonline)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-Support_the_project-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/)
 
 A VR video player for PlayStation VR2, running natively on a jailbroken PS5.
 
@@ -140,7 +140,7 @@ one carries an anchor string that is checked before any offset is used.
 ## Support
 
 If you use PS5VR and want to help cover the time it took to build, there's a
-[Buy Me a Coffee](https://buymeacoffee.com/theghostonline). Completely
+[Buy Me a Coffee](https://buymeacoffee.com/). Completely
 optional.
 
 ## Licence
