@@ -2108,6 +2108,7 @@ static struct {
     size_t   fs_bytes;
     uint32_t fs_w, fs_h;
     int      fs_have_left;
+    unsigned fs_seq;           /* pictures since pairing restarted (no frame rate) */
     double   fs_fps;
 } s_vr = { .mem_off = -1, .src_off = -1, .src_pts = INT64_MIN, .up_off = -1, .sh_off = -1,
           .fg_on = 1, .fg_prev_off = -1, .fg_mid_off = -1, .fg_small_off = -1, .fg_prev_pts = INT64_MIN,
@@ -2250,6 +2251,7 @@ void eng_agc_vr_set_view(const eng_agc_vr_view_t *view)
         (view->stereo == ENG_AGC_VR_FRAMESEQ) != (s_vr.view.stereo == ENG_AGC_VR_FRAMESEQ)) {
         s_vr.src_pts = s_vr.fs_pts = INT64_MIN;
         s_vr.fs_have_left = 0;
+        s_vr.fs_seq = 0;
     }
     s_vr.view_set = view != NULL;
     if (view)
@@ -2281,6 +2283,7 @@ void eng_agc_vr_reset_picture(void)
 {
     s_vr.src_pts = s_vr.fs_pts = INT64_MIN;
     s_vr.fs_have_left = 0;
+    s_vr.fs_seq = 0;
     /* a new video: no previous picture, and its sound starts unshifted */
     s_vr.fg_have_prev = s_vr.fg_pending = s_vr.fg_active = 0;
     s_vr.fg_prev_pts = INT64_MIN;
@@ -4935,8 +4938,12 @@ static int vr_frameseq(int pipe_id, uint32_t w, uint32_t h, int64_t pts_us)
         s_vr.fs_h = h;
         s_vr.fs_have_left = 0;
     }
-    const double fps = s_vr.fs_fps > 1.0 ? s_vr.fs_fps : 48.0;
-    const int right = (int)(llround((double)(pts_us - s_vr.fs_start_us) * fps / 1e6) & 1);
+    /* The eye comes from the picture's place in time, so a dropped picture
+     * cannot swap the eyes. Without a frame rate (guessing one would pair the
+     * wrong pictures) alternate as the pictures come. */
+    const int right = s_vr.fs_fps > 1.0
+        ? (int)(llround((double)(pts_us - s_vr.fs_start_us) * s_vr.fs_fps / 1e6) & 1)
+        : (int)(s_vr.fs_seq++ & 1u);
     const int shown = s_vr.src_mem && s_vr.src_pts != INT64_MIN && s_vr.src_w == 2u * w && s_vr.src_h == h;
     s_vr.fs_pts = pts_us;
     if (!right && shown) {                 /* a left eye: held until its right eye comes */
