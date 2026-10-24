@@ -9,7 +9,7 @@
  * Several firmware ship the same build of a library, and then one table
  * serves them all (same offsets and anchor, checked from their libraries):
  *   1360  13.20, 13.60 (and 13.40's libSceVrTracker2)
- *   1240  12.20, 12.40
+ *   1240  12.20, 12.40, 12.70 (12.70: Hmd2, VrTracker2 and VrHand checked)
  *   1000  10.00, 10.01, 10.40, 10.60 (10.01: libSceHmd2 checked)
  *   761   7.20, 7.61 (7.20's from theghostonline/PS5VR#15, identical)
  * 11.60, 8.40 and 5.50 have their own. libSceVrHand is listed only

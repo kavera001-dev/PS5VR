@@ -10,6 +10,7 @@ console.
 |---|---|---|
 | 13.60 | tested | |
 | 12.40 | tested ¹ | |
+| 12.70 | tested ⁵ | |
 | 13.20, 13.40 ², 12.20 | checked | |
 | 10.00, 10.01 ⁴, 10.40, 10.60, 11.60 | checked | hand tracking |
 | 7.20, 7.61, 8.40 | checked | hand tracking |
@@ -20,6 +21,10 @@ console.
 3. 5.50 predates PS VR2's release, so headset support there may be incomplete.
 4. Only 10.01's `libSceHmd2` and `libSceSystemService` were checked; the first
    matches 10.00's, and 10.00, 10.40 and 10.60 share one VR tracker build.
+5. 12.70's `libSceHmd2`, `libSceVrTracker2` and `libSceVrHand` are the same
+   builds as 12.40's: the generator gives the 12.40 tables, anchors included,
+   so 12.70 uses them. A build with these offsets played video with the
+   headset on a 12.70 console. Its `libSceSystemService` was not checked.
 
 `libSceSystemService` (clean exit) is still needed for 13.40, 11.60, 8.40, 7.20
 and 7.61; without it the app ends its own process instead.
