@@ -415,6 +415,9 @@ void eng_agc_vr_reset_picture(void);
 void eng_agc_vr_set_frame_rate(double fps, int64_t start_us);
 /* 1 while frame-sequential 3D shows: every picture is needed, none skipped. */
 int  eng_agc_vr_frameseq(void);
+/* After a seek: start a new left/right pair (any thread; applied before the
+ * next picture is drawn). */
+void eng_agc_vr_frameseq_reset(void);
 #endif
 
 #ifdef __cplusplus

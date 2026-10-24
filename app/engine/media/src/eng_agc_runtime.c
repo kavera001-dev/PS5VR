@@ -2269,6 +2269,25 @@ int eng_agc_vr_frameseq(void)
     return s_vr.view_set && s_vr.view.stereo == ENG_AGC_VR_FRAMESEQ;
 }
 
+/* The demux thread asks after a seek; the render thread forgets the half-built
+ * pair itself (vr_fs_take_reset), so the two never touch it at once. Without
+ * this the first pair after a seek joined a left eye from before it. */
+static int s_fs_reset_req;
+
+void eng_agc_vr_frameseq_reset(void)
+{
+    __atomic_store_n(&s_fs_reset_req, 1, __ATOMIC_RELEASE);
+}
+
+static void vr_fs_take_reset(void)
+{
+    if (__atomic_exchange_n(&s_fs_reset_req, 0, __ATOMIC_ACQ_REL)) {
+        s_vr.fs_have_left = 0;
+        s_vr.fs_pts = INT64_MIN;
+        s_vr.fs_seq = 0;
+    }
+}
+
 void eng_agc_vr_set_submit(void (*submit)(void))
 {
     s_vr.submit = submit;
@@ -5007,6 +5026,7 @@ int eng_agc_blit_yuv(const uint8_t *y,  int y_pitch,
     eng_agc_transient_ring_t *ring = &g_agc_dev.transient_ring;
 #ifdef APP_VR
     const int vr = s_vr.view_set;
+    vr_fs_take_reset();
     if (vr && s_vr.src_mem && (pts_us == s_vr.src_pts ||
                                (s_vr.view.stereo == ENG_AGC_VR_FRAMESEQ && pts_us == s_vr.fs_pts))) {
         if (s_vr.fg_pending) {       /* the in-between picture had this slot's turn */

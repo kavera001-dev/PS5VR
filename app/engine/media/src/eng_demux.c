@@ -31,6 +31,9 @@
 #include "app_subs.h"
 #endif
 #include "eng_vdec.h"
+#ifdef APP_VR
+#include "eng_agc_runtime.h"
+#endif
 #include "eng_adec.h"
 #include "pp_stage_breadcrumb.h"
 
@@ -355,6 +358,9 @@ packet_queue_clear(
             avformat_flush(play_fmt);
 
         eng_vdec_flush(g_vdec);   /* video codec + scratch frame/packet (A6) */
+#ifdef APP_VR
+        eng_agc_vr_frameseq_reset();   /* frame sequential: a new eye pair */
+#endif
         if (g_adec) {
             eng_adec_flush(g_adec);
         }
