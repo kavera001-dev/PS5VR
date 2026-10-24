@@ -1192,8 +1192,9 @@ static int contains(const char *s, const char *sub)
 static int stereo_of(const char *s)
 {
     /* frame sequential (alternating left/right frames) only when it says so:
-     * the frames look like ordinary video */
-    if (has_token(s, "fs") || has_token(s, "fseq") || has_token(s, "frameseq") ||
+     * the frames look like ordinary video. Not a bare "fs": release names use
+     * FS for full screen (4:3), and that would also win over "hsbs" below. */
+    if (has_token(s, "fseq") || has_token(s, "frameseq") ||
         contains(s, "framesequential") || contains(s, "frame-sequential") ||
         contains(s, "frame_sequential") || contains(s, "frame.sequential") ||
         contains(s, "frame sequential"))
