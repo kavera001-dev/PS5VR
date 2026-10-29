@@ -12,9 +12,8 @@
  *   buttons           Left/Right move, Up to the progress bar, Down hides,
  *                     Cross acts
  *
- * The controls hide after 4.2 s without input while playing; five seconds
- * paused brings the "You're watching" overlay. Seeks commit one second after
- * the last press.
+ * The controls hide after 4.2 s without input while playing. Seeks commit one
+ * second after the last press.
  */
 #include "app_osd.h"
 
@@ -30,7 +29,6 @@
 namespace {
 
 constexpr double kAutoHide = 4.2;
-constexpr double kPauseOverlayAfter = 5.0;
 constexpr double kSeekCommit = 1.0;
 constexpr double kSkipShowFor = 8.0;
 
@@ -890,16 +888,10 @@ void AppOsd::tick(const AppStatus &st, std::vector<OsdCommand> &out)
     if (!m_seeking && a_seek.target > 0 && now >= m_seek_shown_until)
         a_seek.to(0.0f, 0.2f);
 
-    /* Pause overlay after five quiet seconds paused. */
+    /* No "You're watching" overlay when paused: it covered the video. */
     if (st.paused && st.started) {
         if (m_paused_since < 0)
             m_paused_since = now;
-        if (!m_pause_overlay && m_dialog == DLG_NONE && !m_seeking &&
-            now - m_paused_since >= kPauseOverlayAfter) {
-            m_pause_overlay = true;
-            a_pause.to(1.0f, 0.18f);
-            hide_controls();
-        }
     } else {
         m_paused_since = -1;
         if (m_pause_overlay) {
