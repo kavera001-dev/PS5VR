@@ -40,8 +40,10 @@ OBJS := $(patsubst %.c,$(OBJDIR)/%.o,$(ENGINE_C) $(APP_C)) \
 
 # PS5VR: edge264 (BSD, third_party/edge264) decodes H.264 MVC - 3D Blu-ray -
 # with both views. One unity build (edge264.c includes the rest); the PS5 has
-# no ENODATA, so edge264's end-of-stream code gets a private value.
-EDGE264_DEFS := -DENODATA=9919
+# no ENODATA, so edge264's end-of-stream code gets a private value. NDEBUG: its
+# asserts are bookkeeping checks, and a file that trips one should play on, not
+# abort the app (one did, on every 3D Blu-ray rip, issue #5).
+EDGE264_DEFS := -DENODATA=9919 -DNDEBUG
 ifneq ($(findstring APP_VR,$(EXTRA_DEFS)),)
 OBJS += $(OBJDIR)/third_party/edge264/edge264.o
 endif

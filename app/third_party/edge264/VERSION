@@ -1,1 +1,11 @@
 2c2ab95d63c1ad89c5687f9e50b57cad772c871b Tue Jul 28 22:00:13 2026 +0200
+
+Local changes (search for "PS5VR:" in src/):
+- edge264_headers.c: no frame_num gap process on an IDR picture (every IDR
+  after the first overflowed the second view's DPB in 3D Blu-ray rips).
+- edge264_headers.c: same_views refreshed after the slice takes its slots.
+- edge264_headers.c, edge264_internal.h: DPB fullness counted after the
+  current picture's reference marking (P frames came out before their B
+  frames: 26 of 36 x264 test streams were out of order).
+- edge264.c, edge264_headers.c, edge264_internal.h: workers get a 1 MiB
+  stack, and edge264_free stops and joins them instead of pthread_cancel.

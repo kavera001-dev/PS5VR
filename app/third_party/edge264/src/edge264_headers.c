@@ -460,8 +460,13 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		pthread_mutex_lock(&c.d->lock);
 	while (1) {
 		// wait until a task becomes available and reserve it
-		while (c.thread_id >= 0 && !c.d->ready_tasks)
+		while (c.thread_id >= 0 && !c.d->ready_tasks) {
+			if (c.d->stop_threads) { // PS5VR: edge264_free joins instead of cancelling
+				pthread_mutex_unlock(&c.d->lock);
+				return NULL;
+			}
 			pthread_cond_wait(&c.d->task_ready, &c.d->lock);
+		}
 		assert((unsigned)c.d->ready_tasks - 1 < 65535); // 0 < ready_tasks < 65536
 		int task_id = __builtin_ctz(c.d->ready_tasks); // FIXME arbitrary selection for now
 		int currPic = c.d->taskPics[task_id];
@@ -1093,7 +1098,10 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	
 	// check for gaps in frame_num (8.2.5.2)
 	int gap = dec->FrameNum - dec->PrevRefFrameNum[non_base_view];
-	if (__builtin_expect(gap > 1, 0)) {
+	// PS5VR: not on an IDR, which resets PrevRefFrameNum (7.4.3). Every IDR after
+	// the first otherwise made max_num_ref_frames non-existing frames, and in MVC
+	// the second view's DPB overflowed (assert below, 3D Blu-ray rips).
+	if (__builtin_expect(gap > 1, 0) && !dec->IdrPicFlag) {
 		// make enough non-reference slots by dereferencing short-term and non-existing frames
 		int sref_slots = sps->max_num_ref_frames - __builtin_popcount(same_views & dec->prev_long_term_frames & ~dec->prev_short_term_frames);
 		assert(sref_slots > 0);
@@ -1167,6 +1175,9 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 		dec->next_deblock_addr[currPic] = 0;
 		log_dec(dec, "  FrameId: %u\n", dec->FrameIds[currPic]);
 	}
+	// PS5VR: the non-existing frames and currPic above may have taken slots of the
+	// other view, so same_views from the start of the slice is stale.
+	same_views = non_base_view ? dec->non_base_frames : ~dec->non_base_frames;
 	
 	// each slice has the initial references state of the previous frame
 	dec->view_short_term_frames = dec->prev_short_term_frames & same_views;
@@ -1236,7 +1247,10 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 				max_bump += dec->FieldOrderCnt[0][__builtin_ctz(o)] < dec->TopFieldOrderCnt;
 		}
 		// apply bumping process until there is an empty slot
-		while (__builtin_popcount(dpb_frames(dec) & same_views) >= sps->max_dec_frame_buffering && max_bump--)
+		// PS5VR: count references after the marking of the current picture (sliding
+		// window included) and not the picture itself (C.4.5.1). Counting the old
+		// references output a P frame before the B frames shown ahead of it.
+		while (__builtin_popcount(view_dpb_frames(dec, same_views) & ~(1 << dec->currPic)) >= sps->max_dec_frame_buffering && max_bump--)
 			bump_frame(dec, non_base_view, 0);
 		dec->to_get_frames |= 1 << dec->currPic;
 		// if DPB has no outputable frame left then put current frame in output queue,
@@ -1279,7 +1293,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	ret = print_dec(dec, dec->n_threads || dec->worker_loop != worker_loop_log ?
 		"  decode_NAL_result: %s\n" : t->pps.entropy_coding_mode_flag ?
 		"  macroblocks_cabac:\n" : "  macroblocks_cavlc:\n", 0);
-	assert(__builtin_popcount(dpb_frames(dec) & same_views) <= sps->max_dec_frame_buffering);
+	assert(__builtin_popcount(view_dpb_frames(dec, same_views)) <= sps->max_dec_frame_buffering);
 	if (dec->n_threads)
 		pthread_cond_signal(&dec->task_ready);
 	else

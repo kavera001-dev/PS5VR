@@ -164,13 +164,22 @@ done
 CXX_RUNTIME=("${PS5_SYSROOT}/lib/libc++.a" "${PS5_SYSROOT}/lib/libc++abi.a" "${PS5_SYSROOT}/lib/libunwind.a")
 STUBDIR="${PS5_SYSROOT}/lib"
 LINK_LOG="${BUILD}/link.log"
+# The SDK's stubs in a fixed order, libkernel first. lld binds a symbol to the
+# first stub that defines it, and libkernel_web.so (plus libkernel_stub_weak.so,
+# a link to it) defines the whole kernel too. A plain *.so glob sorts by locale:
+# in some shells libkernel_web.so came first, every kernel import bound to it,
+# and the app faulted at start (the first 1.3.0 zip).
+STUB_SOS=("${STUBDIR}/libkernel.so")
+while IFS= read -r so; do
+    [[ "${so}" == "${STUBDIR}/libkernel.so" ]] || STUB_SOS+=("${so}")
+done < <(LC_ALL=C ls -1 "${STUBDIR}"/*.so | LC_ALL=C sort)
 link_app() {
     "${LLD}" -T "${NATIVE}/ps5-pie.ld" --eh-frame-hdr \
         --version-script "${NATIVE}/app-symbols.map" --exclude-libs=ALL --error-limit=0 \
         -L "${BUILD}/obj" -e _start -o "${BUILD}/llvm-pie.elf" \
         "${RUNTIME_OBJS[@]}" "${OBJS[@]}" "$@" "${PRX_STUB_SOS[@]}" \
         --start-group "${ARCHIVES[@]}" --end-group "${CXX_RUNTIME[@]}" \
-        --as-needed "${STUBDIR}"/*.so "${PRX_STUB_SOS[@]}" \
+        --as-needed "${STUB_SOS[@]}" "${PRX_STUB_SOS[@]}" \
         --start-group "${PS5_SYSROOT}/lib/libc.a" --end-group \
         2> "${LINK_LOG}"
 }
@@ -213,6 +222,12 @@ for so in "${PRX_STUB_SOS[@]}"; do CONV_STUB_ARGS+=(--stub "${so}"); done
 "${TOOL}" link --in "${BUILD}/llvm-pie.elf" --out "${BUILD}/eboot.elf" \
     --stub-dir "${STUBDIR}" "${CONV_STUB_ARGS[@]}" \
     --module-sdk "${MODULE_SDK}" --companion-sdk "${COMPANION_SDK}" --file-name eboot.elf
+# The kernel must come from libkernel. An app's imports from libkernel_web (the
+# payload SDK's default) bind to NULL, and the app faults on its first kernel
+# call in main(): a 1.3.0 rebuild shipped like that and crashed on every console.
+if LC_ALL=C grep -q -a 'libkernel_web' "${BUILD}/eboot.elf"; then
+    die "eboot.elf imports libkernel_web; an app needs libkernel (check the link and the stub dir)"
+fi
 rm -rf -- "${APPDIR}"
 mkdir -p "${APPDIR}/sce_sys" "${APPDIR}/sce_module"
 "${TOOL}" self --sign --in "${BUILD}/eboot.elf" --out "${APPDIR}/eboot.bin" --magic "${FSELF_MAGIC}"

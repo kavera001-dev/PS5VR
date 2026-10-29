@@ -139,6 +139,21 @@ static int unsup_NAL(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_a
 
 
 
+// PS5VR: worker stack size, and a clean stop: pthread_cancel left a worker that
+// was mid-slice running on a freed decoder, and a cancelled cond_wait returns
+// holding the lock.
+#ifndef EDGE264_THREAD_STACK
+#define EDGE264_THREAD_STACK (1u << 20)
+#endif
+static void stop_workers(Edge264Decoder *dec, int n) {
+	pthread_mutex_lock(&dec->lock);
+	dec->stop_threads = 1;
+	pthread_cond_broadcast(&dec->task_ready);
+	pthread_mutex_unlock(&dec->lock);
+	for (int i = 0; i < n; i++)
+		pthread_join(dec->threads[i], NULL);
+}
+
 Edge264Decoder *edge264_alloc(int n_threads, Edge264LogCb log_cb, void *log_arg, int log_mbs, Edge264AllocCb alloc_cb, Edge264FreeCb free_cb, void *alloc_arg) {
 	Edge264Decoder *dec = aligned_alloc(64, sizeof(*dec)); // maximal SIMD type alignment used in edge264
 	if (dec == NULL)
@@ -236,14 +251,21 @@ Edge264Decoder *edge264_alloc(int n_threads, Edge264LogCb log_cb, void *log_arg,
 		if (pthread_cond_init(&dec->task_ready, NULL) == 0) {
 			if (pthread_cond_init(&dec->task_progress, NULL) == 0) {
 				if (pthread_cond_init(&dec->task_complete, NULL) == 0) {
+					// PS5VR: an explicit stack, the console's default is too small for
+					// decoders (engine rule, eng_thread.h)
+					pthread_attr_t attr;
+					int attr_ok = pthread_attr_init(&attr) == 0;
+					if (attr_ok)
+						pthread_attr_setstacksize(&attr, EDGE264_THREAD_STACK);
 					int i = 0;
-					while (i < n_threads && pthread_create(&dec->threads[i], NULL, dec->worker_loop, (void *)((uintptr_t)dec + i)) == 0)
+					while (i < n_threads && pthread_create(&dec->threads[i], attr_ok ? &attr : NULL, dec->worker_loop, (void *)((uintptr_t)dec + i)) == 0)
 						i++;
+					if (attr_ok)
+						pthread_attr_destroy(&attr);
 					if (i == n_threads) {
 						return dec;
 					}
-					while (i-- > 0)
-						pthread_cancel(dec->threads[i]);
+					stop_workers(dec, i);
 					pthread_cond_destroy(&dec->task_complete);
 				}
 				pthread_cond_destroy(&dec->task_progress);
@@ -276,8 +298,10 @@ void edge264_free(Edge264Decoder **pdec) {
 	if (pdec != NULL && (dec = *pdec) != NULL) {
 		*pdec = NULL;
 		if (dec->n_threads) {
-			for (int i = 0; i < dec->n_threads; i++)
-				pthread_cancel(dec->threads[i]);
+			pthread_mutex_lock(&dec->lock);
+			flush_frames(dec); // PS5VR: let running slices finish (and call their unref_cb)
+			pthread_mutex_unlock(&dec->lock);
+			stop_workers(dec, dec->n_threads);
 			pthread_mutex_destroy(&dec->lock);
 			pthread_cond_destroy(&dec->task_ready);
 			pthread_cond_destroy(&dec->task_progress);

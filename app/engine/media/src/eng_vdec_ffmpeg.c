@@ -41,8 +41,19 @@ int eng_vdec_multiview_active;
 #define ENODATA 9919
 #endif
 #include "edge264/edge264.h"
+#include <stdatomic.h>
 #define MVC_OUT_RING  12          /* joined frames; the engine borrows a few */
 #define MVC_PTS_MAX   64
+/* edge264's worker threads decode a slice after edge264_decode_NAL has
+ * returned, out of the buffer it was given, and call the unref callback when
+ * they are done with it. The play loop frees a packet as soon as send returns,
+ * so each packet is copied into one of these and its last slice frees it.
+ * (Slices read from freed packets: blocky corruption, then a crash a few
+ * seconds into a 3D Blu-ray rip, issue #5.) */
+typedef struct mvc_buf {
+    atomic_int refs;              /* the packet's own + one per slice in flight */
+    uint8_t    data[];
+} mvc_buf;
 #endif
 
 #ifndef FF_PROFILE_UNKNOWN
@@ -87,6 +98,7 @@ struct eng_vdec {
     int             mvc_r, mvc_n;          /* ready frames: first slot, count */
     int64_t         mvc_pts[MVC_PTS_MAX];  /* pending input pts, ascending */
     int             mvc_npts;
+    mvc_buf        *mvc_cur;               /* our copy of the packet being fed */
     const uint8_t  *mvc_resume_pkt;        /* a packet cut short by ENOBUFS... */
     int             mvc_resume_size, mvc_resume_off;   /* ...and where to go on */
     const AVCodecParameters *par;
@@ -248,11 +260,49 @@ static void mvc_collect(eng_vdec *v)
     }
 }
 
+static mvc_buf *mvc_buf_new(const uint8_t *data, int size)
+{
+    /* edge264 reads ahead of a NAL's end like FFmpeg does: same zero padding */
+    mvc_buf *b = malloc(sizeof(*b) + (size_t)size + AV_INPUT_BUFFER_PADDING_SIZE);
+    if (!b)
+        return NULL;
+    atomic_init(&b->refs, 1);
+    memcpy(b->data, data, (size_t)size);
+    memset(b->data + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+    return b;
+}
+
+/* edge264's Edge264UnrefCb; runs on a worker thread for slices */
+static void mvc_buf_unref(int ret, void *arg)
+{
+    (void)ret;
+    mvc_buf *b = arg;
+    if (atomic_fetch_sub(&b->refs, 1) == 1)
+        free(b);
+}
+
+/* Drop a packet cut short; only once edge264 has no slice of it in flight
+ * (after edge264_flush/edge264_free), or the slices keep their own refs. */
+static void mvc_drop_cur(eng_vdec *v)
+{
+    if (v->mvc_cur)
+        mvc_buf_unref(0, v->mvc_cur);
+    v->mvc_cur = NULL;
+    v->mvc_resume_pkt = NULL;
+}
+
 static int mvc_feed_nal(const uint8_t *nal, const uint8_t *end, void *arg)
 {
     eng_vdec *v = arg;
+    /* slices (1, 5, 20) are decoded later on a worker; the rest during the call */
+    const int t = nal[0] & 31;
+    mvc_buf *b = (v->mvc_cur && (t == 1 || t == 5 || t == 20)) ? v->mvc_cur : NULL;
     for (int tries = 0; tries < 2; tries++) {
-        int r = edge264_decode_NAL(v->e264, nal, end, NULL, NULL);
+        if (b)
+            atomic_fetch_add(&b->refs, 1);
+        int r = edge264_decode_NAL(v->e264, nal, end, b ? mvc_buf_unref : NULL, b);
+        if (b && r != 0)
+            atomic_fetch_sub(&b->refs, 1);   /* no task was made: nothing will unref */
         mvc_collect(v);
         if (r != ENOBUFS)
             return 0;                        /* errors in one NAL do not stop the stream */
@@ -337,19 +387,22 @@ static int mvc_send(eng_vdec *v, const uint8_t *data, int size, int64_t pts_us)
         return 0;
     }
     int off = 0;
-    if (v->mvc_resume_pkt == data && v->mvc_resume_size == size) {
+    if (v->mvc_cur && v->mvc_resume_pkt == data && v->mvc_resume_size == size) {
         off = v->mvc_resume_off;             /* the rest of a packet cut short */
     } else {
+        mvc_drop_cur(v);                     /* the engine moved on without it */
+        if (!(v->mvc_cur = mvc_buf_new(data, size)))
+            return -1;
         mvc_pts_push(v, pts_us);
     }
     int stop = 0;
-    if (for_each_nal(data, size, v->nal_len, mvc_feed_nal, v, off, &stop)) {
+    if (for_each_nal(v->mvc_cur->data, size, v->nal_len, mvc_feed_nal, v, off, &stop)) {
         v->mvc_resume_pkt = data;
         v->mvc_resume_size = size;
         v->mvc_resume_off = stop;
         return 1;
     }
-    v->mvc_resume_pkt = NULL;
+    mvc_drop_cur(v);                         /* its slices hold their own refs */
     return 0;
 }
 #endif
@@ -818,7 +871,10 @@ void eng_vdec_flush(eng_vdec *v)
         eng_vdec_native_flush(v->nat);
         return;
     }
-    if (v->ctx)
+    /* Open only: an MVC stream that started on the hardware decoder has a
+     * context that was never opened (edge264 decodes it), and flushing that
+     * one faulted on every seek (issue #5). */
+    if (v->ctx && avcodec_is_open(v->ctx))
         avcodec_flush_buffers(v->ctx);
     for (int i = 0; i < FFMPEG_FRAME_RING; i++) {
         if (v->frames[i])
@@ -828,11 +884,11 @@ void eng_vdec_flush(eng_vdec *v)
     if (v->mv_left)
         av_frame_unref(v->mv_left);
     if (v->e264) {
-        edge264_flush(v->e264);
+        edge264_flush(v->e264);              /* waits for the slices in flight */
         v->mvc_n = 0;
         v->mvc_r = v->mvc_w;
         v->mvc_npts = 0;
-        v->mvc_resume_pkt = NULL;
+        mvc_drop_cur(v);
     }
 #endif
     if (v->pkt)
@@ -859,9 +915,10 @@ void eng_vdec_close(eng_vdec *v)
     for (int i = 0; i < FFMPEG_FRAME_RING; i++)
         av_frame_free(&v->mv_out[i]);
     if (v->e264) {
-        edge264_free(&v->e264);
+        edge264_free(&v->e264);              /* finishes the slices in flight first */
         eng_vdec_multiview_active = 0;
     }
+    mvc_drop_cur(v);
     for (int i = 0; i < MVC_OUT_RING; i++)
         av_frame_free(&v->mvc_out[i]);
 #endif

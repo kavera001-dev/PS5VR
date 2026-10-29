@@ -390,6 +390,7 @@ typedef struct Edge264Decoder {
 	Edge264GetBits gb; // must be first in the struct to use the same pointer for bitstream functions
 	int8_t n_threads; // 0 to disable multithreading
 	int8_t max_output_latency; // number of frames in output_queue to suspend decoding of new frames, 0..16
+	int8_t stop_threads; // PS5VR: set by edge264_free, workers return when idle
 	int8_t nal_unit_type; // 5 significant bits
 	int32_t plane_size_Y;
 	int32_t plane_size_C;
@@ -1226,6 +1227,10 @@ static always_inline unsigned ready_tasks(Edge264Decoder *dec) {
 }
 static inline unsigned dpb_frames(Edge264Decoder *dec) {
 	return dec->prev_short_term_frames | dec->prev_long_term_frames | dec->to_get_frames & ~dec->output_frames;
+}
+// PS5VR: the DPB of one view with the current picture's reference marking applied
+static inline unsigned view_dpb_frames(Edge264Decoder *dec, unsigned same_views) {
+	return (dec->view_short_term_frames | dec->view_long_term_frames | dec->to_get_frames & ~dec->output_frames) & same_views;
 }
 static inline unsigned unavail_frames(Edge264Decoder *dec) {
 	return dec->prev_short_term_frames | dec->prev_long_term_frames | dec->to_get_frames | dec->output_frames;
