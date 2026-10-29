@@ -2,6 +2,7 @@
  * vr_sources - see vr_sources.h.
  */
 #include "vr_sources.h"
+#include "vr_system.h"
 
 #include "cJSON.h"
 #include "eng_boot_trace.h"
@@ -856,7 +857,13 @@ void vr_prefs_set_control(int mode) { prefs_load(); s_prefs_control = mode; pref
 const char *vr_control_name(int mode)
 {
     static const char *const k[] = {"Off", "Hands", "Eyes + pinch", "Eyes + blink"};
-    return k[mode >= 0 && mode < 4 ? mode : 0];
+    const char *name = k[mode >= 0 && mode < 4 ? mode : 0];
+    const char *why = (mode == 1 || mode == 2) ? vr_hands_problem() : nullptr;
+    if (!why)
+        return name;
+    static char buf[64];
+    std::snprintf(buf, sizeof buf, "%s, %s", name, why);
+    return buf;
 }
 bool vr_prefs_hdr(void) { prefs_load(); return s_prefs_hdr; }
 void vr_prefs_set_hdr(bool on) { prefs_load(); s_prefs_hdr = on; prefs_save(); }

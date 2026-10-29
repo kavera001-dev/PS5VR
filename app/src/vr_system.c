@@ -123,6 +123,14 @@ int vr_hands_on(void)
     return s_hand_on;
 }
 
+/* Why hand tracking didn't start (shown next to the setting), or NULL. */
+static const char *volatile s_hand_problem;
+
+const char *vr_hands_problem(void)
+{
+    return s_hand_problem;
+}
+
 /* The hand models. libSceVrHand asks the system's tracker daemon for them
  * through libSceVrTracker2 (export 0x7f50: a "set VR model" command, then the
  * file over /system_tmp/VrTracker2DomainSock), and the daemon sends PS5VR
@@ -231,6 +239,59 @@ int vr_helper_ask(const char *req, char *reply, size_t size)
     return n > 0 ? 0 : -1;
 }
 
+static int helper_answers(void)
+{
+    char reply[16];
+    return vr_helper_ask("ping\n", reply, sizeof reply) == 0 && !strncmp(reply, "ok", 2);
+}
+
+/* PS5VR carries ps5vr-helper: when none answers, the copy in /app0 goes to the
+ * ELF loader (127.0.0.1:9021), which runs what it reads. The connection stays
+ * open until the helper answers, since a loader may stop reading when it closes. */
+int vr_helper_start(void)
+{
+    if (helper_answers()) {
+        eng_bt("vr: ps5vr-helper is running");
+        return 0;
+    }
+    const int elf = open("/app0/ps5vr-helper.elf", O_RDONLY);
+    if (elf < 0) {
+        eng_bt("vr: no /app0/ps5vr-helper.elf");
+        return -1;
+    }
+    const int sk = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_port = htons(9021);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    struct timeval tv = {5, 0};
+    if (sk >= 0)
+        setsockopt(sk, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    int sent = sk >= 0 && connect(sk, (struct sockaddr *)&a, sizeof a) == 0;
+    static char buf[16384];
+    for (ssize_t r; sent && (r = read(elf, buf, sizeof buf)) > 0;)
+        for (ssize_t off = 0; sent && off < r;) {
+            const ssize_t w = send(sk, buf + off, (size_t)(r - off), 0);
+            if (w <= 0)
+                sent = 0;
+            else
+                off += w;
+        }
+    close(elf);
+    int up = 0;
+    for (int i = 0; sent && i < 40 && !up; i++) {   /* up to 10 s */
+        usleep(250 * 1000);
+        up = helper_answers();
+    }
+    if (sk >= 0)
+        close(sk);
+    eng_bt("vr: ps5vr-helper %s", up ? "started through the ELF loader"
+                                     : sent ? "sent to the ELF loader, but it does not answer"
+                                            : "not started (no ELF loader on port 9021)");
+    return up ? 0 : -1;
+}
+
 /* An app may not open the headset cameras (/dev/hmd2_image, _leddet answer it
  * 0x8a721003, and initialisation then stops at 0x8a8700ff): ps5vr-helper
  * raises PS5VR's credentials a step at a time until it can. */
@@ -242,6 +303,7 @@ static int cameras_open(void)
             snprintf(req, sizeof req, "elevate %d %d\n", (int)getpid(), level);
             if (vr_helper_ask(req, reply, sizeof reply) != 0) {
                 eng_bt("vr: hand tracking needs ps5vr-helper, which is not running");
+                s_hand_problem = "needs ps5vr-helper";
                 return 0;
             }
             eng_bt("vr: ps5vr-helper: %s", reply);
@@ -310,12 +372,19 @@ static int hands_start(void)
 
 static void hands_tick(void)
 {
-    if (!s_hand_ok)
+    if (!s_hand_ok) {
+        if (s_hand_want)
+            s_hand_problem = "not on this firmware";
         return;
+    }
     if (s_hand_want && !s_hand_on) {
+        s_hand_problem = NULL;
         s_hand_on = hands_start() == 0;
-        if (!s_hand_on)
+        if (!s_hand_on) {
             s_hand_want = 0;
+            if (!s_hand_problem)
+                s_hand_problem = "didn't start";
+        }
     } else if (!s_hand_want && s_hand_on) {
         eng_bt("vr: hand tracking stop 0x%08x finalize 0x%08x", sceVrHandStop(), sceVrHandFinalize());
         s_hand_on = 0;

@@ -316,6 +316,9 @@ int main()
         for (;;)
             usleep(1 * 1000 * 1000);
     }
+    /* ps5vr-helper finds the VR functions on firmware without a table, so it
+     * runs before they bind; the copy PS5VR carries starts if none is running. */
+    vr_helper_start();
     /* /data and USB drives: ps5vr-helper (or etaHEN's jailbreak daemon) opens
      * the sandbox - after every system module is loaded, because they load
      * through the sandbox's own path. */
@@ -343,7 +346,7 @@ int main()
     for (;;) {
         /* No headset without its libraries: say why instead of waiting forever. */
         draw_home(vr_ok ? "Put on your PlayStation VR2"
-                  : app_vr_helper_missing() ? "Load ps5vr-helper.elf, then start PS5VR again"
+                  : app_vr_helper_missing() ? "Start your ELF loader (port 9021), then start PS5VR again"
                   : "This firmware isn't supported yet");
         char *req = nullptr;
         std::string path, title, vr;

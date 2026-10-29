@@ -232,6 +232,8 @@ rm -rf -- "${APPDIR}"
 mkdir -p "${APPDIR}/sce_sys" "${APPDIR}/sce_module"
 "${TOOL}" self --sign --in "${BUILD}/eboot.elf" --out "${APPDIR}/eboot.bin" --magic "${FSELF_MAGIC}"
 cp "${PARAM}" "${APPDIR}/sce_sys/param.json"
+# ps5vr-helper rides along; the app sends it to the ELF loader when none runs.
+"${TCC}" -O2 -o "${APPDIR}/ps5vr-helper.elf" "${APP_ROOT}/../helper/ps5vr-helper.c" -lkernel_sys
 cp "${LIBC_PRX}" "${APPDIR}/sce_module/libc.prx"
 for asset in icon0.png pic0.png pic1.png; do
     [[ -f "${SCE_SYS}/${asset}" ]] && cp "${SCE_SYS}/${asset}" "${APPDIR}/sce_sys/"

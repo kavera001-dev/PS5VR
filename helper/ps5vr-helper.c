@@ -9,13 +9,16 @@
  * Only when PS5VR asks: it connects to 127.0.0.1:9079 and sends
  * "unjail <pid>" once it has loaded every system module it needs, and
  * "elevate <pid> <level>" when it starts hand tracking (see elevate()), and
- * "resolve ..." on a firmware it has no export table for (see resolve()). Library
+ * "resolve ..." on a firmware it has no export table for (see resolve()).
+ * "ping" answers "ok", to see that it is running. Library
  * loads go through the sandbox's /<random word>/common/lib path, which does
  * not exist under the real root, so a process unjailed while it is still
  * starting fails to start (PRX_PROCESS_STARTUP_FAILURE).
  *
- * Load it once after boot (nc <ps5> 9021 < ps5vr-helper.elf, or the
- * autoloader). A second copy replaces the first.
+ * PS5VR carries it (/app0/ps5vr-helper.elf) and sends it to the ELF loader
+ * on port 9021 when none is running; loading it by hand (nc <ps5> 9021 <
+ * ps5vr-helper.elf, or the autoloader) still works. A second copy replaces
+ * the first.
  */
 #include <signal.h>
 #include <stdarg.h>
@@ -211,7 +214,9 @@ int main(void)
         int pid = 0;
         const char *reply = "fail: bad request\n";
         int level = 0;
-        if (n > 0 && sscanf(line, "unjail %d", &pid) == 1)
+        if (n >= 4 && !strncmp(line, "ping", 4))
+            reply = "ok\n";
+        else if (n > 0 && sscanf(line, "unjail %d", &pid) == 1)
             reply = unjail(pid);
         else if (n > 0 && sscanf(line, "elevate %d %d", &pid, &level) == 2)
             reply = elevate(pid, level);
