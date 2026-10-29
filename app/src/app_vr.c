@@ -1189,11 +1189,31 @@ static int contains(const char *s, const char *sub)
     return 0;
 }
 
+/* Whether `tok` is the name's last word, an extension (".mp4") left out. */
+static int last_token_is(const char *s, const char *tok)
+{
+    size_t len = strlen(s);
+    const char *dot = strrchr(s, '.');
+    if (dot && dot != s && strlen(dot + 1) >= 1 && strlen(dot + 1) <= 5) {
+        int ext = 1;
+        for (const char *p = dot + 1; *p; p++)
+            ext &= isalnum((unsigned char)*p) != 0;
+        if (ext)
+            len = (size_t)(dot - s);
+    }
+    while (len && !isalnum((unsigned char)s[len - 1]))
+        len--;
+    size_t start = len;
+    while (start && isalnum((unsigned char)s[start - 1]))
+        start--;
+    const size_t n = strlen(tok);
+    return len - start == n && ieq(s + start, tok, n);
+}
+
 static int stereo_of(const char *s)
 {
     /* frame sequential (alternating left/right frames) only when it says so:
-     * the frames look like ordinary video. Not a bare "fs": release names use
-     * FS for full screen (4:3), and that would also win over "hsbs" below. */
+     * the frames look like ordinary video. A bare "fs" only at the end, below. */
     if (has_token(s, "fseq") || has_token(s, "frameseq") ||
         contains(s, "framesequential") || contains(s, "frame-sequential") ||
         contains(s, "frame_sequential") || contains(s, "frame.sequential") ||
@@ -1211,6 +1231,11 @@ static int stereo_of(const char *s)
         contains(s, "sidebyside") || contains(s, "side_by_side") || contains(s, "360sbs") ||
         contains(s, "180sbs") || contains(s, "360lr") || contains(s, "180lr"))
         return 1;
+    /* "FS" alone: the name's last word (Movie_FS.mp4, as the 1.3.0 notes ask),
+     * and only after the layouts above (Movie.3D.HSBS.FS.mkv is side by side).
+     * Anywhere else it is a release's "full screen" (Movie.1999.FS.DVDRip.avi). */
+    if (last_token_is(s, "fs"))
+        return 5;
     return 0;
 }
 
